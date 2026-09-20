@@ -1,0 +1,68 @@
+# Aura — локальный стек: PostgreSQL + Python AI Service + C++-сервер.
+#
+#   docker compose up --build postgres ai
+#   docker compose up --build server
+#   cd client && cmake -B build && cmake --build build   # Qt-клиент собирается на хосте
+#
+# Qt-клиент в compose не входит: ему нужен GUI/дисплей, удобнее собирать локально.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aura
+      POSTGRES_PASSWORD: aura
+      POSTGRES_DB: aura
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Схема и демо-данные применяются при первом старте
+      - ./schema/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./schema/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aura -d aura"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ai:
+    build:
+      context: ./ai
+    environment:
+      AURA_AI_HOST: 0.0.0.0
+      AURA_AI_PORT: 8000
+      AURA_LLM_PROVIDER: ${AURA_LLM_PROVIDER:-mock}   # mock | openai
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AURA_TOOLS_BACKEND: ${AURA_TOOLS_BACKEND:-sandbox}
+      AURA_MEMORY_BACKEND: postgresql://aura:aura@postgres:5432/aura
+      AURA_PREVIEW_DIR: /app/preview
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./preview:/app/preview:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  server:
+    build:
+      context: ./server
+    environment:
+      AURA_HOST: 0.0.0.0
+      AURA_PORT: 9000
+      AURA_DATABASE_URL: postgresql://aura:aura@postgres:5432/aura
+      AURA_AI_URL: http://ai:8000
+      AURA_JWT_SECRET: ${AURA_JWT_SECRET:-change-me-in-production}
+      AURA_TOOLS_MODE: ${AURA_TOOLS_MODE:-sandbox}
+      AURA_LOG_LEVEL: info
+    ports:
+      - "9000:9000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ai:
+        condition: service_started
+
+volumes:
+  pgdata:

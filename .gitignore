@@ -1,0 +1,34 @@
+# Сборка
+build/
+out/
+dist/
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+aura-server
+aura-tests
+aura-client
+
+# Локальные данные и окружение
+.aura-data.json
+.aura_memory.json
+.env
+.env.*
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Qt
+CMakeLists.txt.user
+*.pro.user
+.qmlcache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
