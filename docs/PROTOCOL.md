@@ -277,6 +277,37 @@ Access-токен автоматически обновляется по `refres
 По умолчанию URL — реальные эндпоинты Google (прод — за TLS-терминирующим
 прокси); e2e подменяет их локальным mock-сервером (`AURA_E2E_GOOGLE_MOCK=1`).
 
+### Уведомления и push (этап 13)
+
+Единая «входящая» уведомлений: каждое уведомление сохраняется в таблице
+`notifications` и доставляется живым сессиям событием `notification.new`.
+Виды (`kind`): `task.due` (напоминание), `confirmation.requested` (опасная
+операция ждёт решения), `a2a.proposal` (другой агент начал переговоры),
+`login.new` (новый вход), `twofactor.enabled` / `twofactor.disabled`
+(изменение 2FA). Push-доставка — через устройства в `push_devices`
+(платформы `apns` | `webhook` | `dev`); APNs-конверт уходит во внешний шлюз
+(`AURA_PUSH_DRIVER=webhook`, `AURA_PUSH_WEBHOOK_URL`), который подписывает
+JWT и форвардит запрос в APNs — сам C++-сервер TLS/HTTP2 не делает.
+Тихие часы и отключённые виды читаются из настроек пользователя:
+`prefs.notifications = {"quiet_hours": {"start":"22:00","end":"08:00"},
+"muted_kinds": ["login.new"]}` (время UTC; гасят только push, in-app
+доставляется всегда).
+
+| тип | payload | ответ |
+| --- | --- | --- |
+| `notifications.list` | `unread?` (bool), `limit?` (≤200) | `notifications[]` (`id`, `kind`, `title`, `body`, `payload`, `read`, `created_at`), `unread` (счётчик) |
+| `notifications.read` | `id?` (0/нет — все) | `unread`; чужое/несуществующее `id` → `not_found` |
+| `devices.push.register` | `platform`, `token` | `id`, `platform`; повтор тем же токеном — upsert; плохие входные данные → `bad_request` |
+| `devices.push.list` | — | `devices[]` (`id`, `platform`, `enabled`, `created_at`, `last_used_at?`); **токен не отдаётся** |
+| `devices.push.revoke` | `id` | `id`, `revoked`; чужое/несуществующее → `not_found` |
+
+Событие: `notification.new` (владельцу; payload — запись уведомления).
+Push-конверт для шлюза: `{platform, token, notification_id, kind, apns:
+{url, headers: {apns-topic, apns-push-type}, payload: {aps: {alert, badge,
+sound}, kind, data}}}`. Переменные окружения: `AURA_PUSH_DRIVER`
+(`dev`|`webhook`), `AURA_PUSH_WEBHOOK_URL`, `AURA_APNS_TOPIC`
+(`ai.aura.app`), `AURA_APNS_URL` (`https://api.push.apple.com`).
+
 ## HTTP API Python AI Service
 
 | метод | путь | назначение |

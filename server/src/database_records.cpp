@@ -121,6 +121,30 @@ Json PendingActionRecord::toJson() const {
     return json;
 }
 
+Json NotificationRecord::toJson() const {
+    Json json = Json::object();
+    json.set("id", Json(id));
+    json.set("user_id", Json(userId));
+    json.set("kind", Json(kind));
+    json.set("title", Json(title));
+    json.set("body", Json(body));
+    json.set("payload", payload);
+    json.set("read", Json(!readAt.empty()));
+    json.set("created_at", Json(createdAt));
+    return json;
+}
+
+Json PushDeviceRecord::toJson() const {
+    // Токен устройства наружу не отдаётся — только метаданные.
+    Json json = Json::object();
+    json.set("id", Json(id));
+    json.set("platform", Json(platform));
+    json.set("enabled", Json(enabled));
+    json.set("created_at", Json(createdAt));
+    if (!lastUsedAt.empty()) json.set("last_used_at", Json(lastUsedAt));
+    return json;
+}
+
 Json IntegrationConnectionRecord::toJson(bool includeSecret) const {
     Json json = Json::object();
     json.set("id", Json(id));

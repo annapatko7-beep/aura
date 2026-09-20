@@ -45,6 +45,17 @@ struct Config {
     std::string googleCalendarUrl = "https://www.googleapis.com/calendar/v3";    // AURA_GOOGLE_CALENDAR_URL
     std::string googleGmailUrl = "https://gmail.googleapis.com/gmail/v1";        // AURA_GOOGLE_GMAIL_URL
     int oauthStateTtlSec = 600;                          // AURA_OAUTH_STATE_TTL — жизнь одноразового state
+
+    // Push-уведомления (этап 13). Драйверы:
+    //   dev     — писать payload в лог (разработка/e2e без шлюза);
+    //   webhook — POST на AURA_PUSH_WEBHOOK_URL (push-шлюз доставляет в APNs;
+    //             сам шлюз терминирует TLS и хранит ключ APNs).
+    // Реальный APNs требует HTTP/2+TLS и JWT ES256, которых нет в net.h/crypto
+    // намеренно — поэтому доставка только через внешний шлюз (честно, без имитации).
+    std::string pushDriver = "dev";                      // AURA_PUSH_DRIVER: dev|webhook
+    std::string pushWebhookUrl;                          // AURA_PUSH_WEBHOOK_URL
+    std::string apnsTopic = "ai.aura.app";               // AURA_APNS_TOPIC (bundle id iOS)
+    std::string apnsUrl = "https://api.push.apple.com";  // AURA_APNS_URL (для шлюза)
     std::string logLevel = "info";                       // AURA_LOG_LEVEL
 
     static Config fromEnv();

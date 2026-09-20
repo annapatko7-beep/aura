@@ -242,6 +242,34 @@ struct OauthStateRecord {
     std::string usedAt;
 };
 
+// In-app уведомление (этап 13). kind: task.due | confirmation.requested |
+// a2a.proposal | login.new | twofactor.enabled | twofactor.disabled.
+struct NotificationRecord {
+    long long id = 0;
+    long long userId = 0;
+    std::string kind;
+    std::string title;
+    std::string body;
+    Json payload = Json::object();
+    std::string readAt;
+    std::string createdAt;
+
+    Json toJson() const;
+};
+
+// Устройство для push-доставки (этап 13). platform: apns | webhook | dev.
+struct PushDeviceRecord {
+    long long id = 0;
+    long long userId = 0;
+    std::string platform = "apns";
+    std::string token;
+    bool enabled = true;
+    std::string createdAt;
+    std::string lastUsedAt;
+
+    Json toJson() const;  // без token: наружу отдаём только id/platform
+};
+
 struct DatabaseError {
     bool ok = true;
     std::string message;
@@ -403,6 +431,24 @@ public:
     virtual DatabaseError createOauthState(const OauthStateRecord& record) = 0;
     virtual std::optional<OauthStateRecord> findOauthState(const std::string& state) = 0;
     virtual DatabaseError useOauthState(const std::string& state) = 0;
+
+    // Notifications (этап 13): in-app «входящая» уведомлений.
+    virtual DatabaseError createNotification(const NotificationRecord& record, long long& outId) = 0;
+    virtual std::vector<NotificationRecord> listNotifications(long long userId,
+                                                              bool unreadOnly,
+                                                              int limit) = 0;
+    virtual long long unreadNotificationCount(long long userId) = 0;
+    virtual DatabaseError markNotificationRead(long long userId, long long id) = 0;
+    virtual DatabaseError markAllNotificationsRead(long long userId) = 0;
+
+    // PushDevices (этап 13): токены push-доставки (APNs).
+    virtual DatabaseError registerPushDevice(long long userId,
+                                             const std::string& platform,
+                                             const std::string& token,
+                                             long long& outId) = 0;
+    virtual std::vector<PushDeviceRecord> listPushDevices(long long userId) = 0;
+    virtual DatabaseError touchPushDevice(long long id) = 0;
+    virtual DatabaseError deletePushDevice(long long userId, long long id) = 0;
 };
 
 std::unique_ptr<IDatabase> makePostgresDatabase(const std::string& url);

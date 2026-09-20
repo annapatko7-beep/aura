@@ -7,6 +7,7 @@
 
 #include "aura/log.h"
 #include "integrationmanager.h"
+#include "notificationsmanager.h"
 
 namespace aura {
 
@@ -44,6 +45,7 @@ bool Server::start(std::string& error) {
     chats_ = std::make_unique<ChatManager>(*database_, connections_);
     memory_ = std::make_unique<MemoryManager>(*database_, config_);
     integrations_ = std::make_unique<IntegrationManager>(*database_, config_);
+    notifications_ = std::make_unique<NotificationsManager>(*database_, connections_, config_);
     tools_ = std::make_unique<ToolManager>(config_, *database_, *chats_, integrations_.get());
     agent_ = std::make_unique<AgentManager>(config_, *database_, *memory_, *tools_, *chats_);
     taskManager_ = std::make_unique<TaskManager>(*database_, connections_);
@@ -84,7 +86,16 @@ void Server::schedulerLoop() {
 
 std::size_t Server::runSchedulerTick(int limit) {
     if (!taskManager_) return 0;
-    return taskManager_->dueTick(limit).size();
+    const auto due = taskManager_->dueTick(limit);
+    // Этап 13: каждое сработавшее напоминание — ещё и уведомление (in-app + push).
+    if (notifications_) {
+        for (const auto& task : due) {
+            Json payload = Json::object();
+            payload.set("task_id", Json(task.id));
+            notifications_->create(task.userId, "task.due", "Напоминание", task.title, payload);
+        }
+    }
+    return due.size();
 }
 
 void Server::stop() {
@@ -351,6 +362,13 @@ void Server::registerHandlers() {
                         if (!result.ok) return protocol::error(request.id, result.code, result.message);
                         session->authenticate(result.userId, result.displayName, result.email, result.jwtId);
                         connections_.add(session);
+                        // Этап 13: уведомление о новом входе (безопасность).
+                        if (notifications_) {
+                            Json payload = Json::object();
+                            payload.set("device", Json(request.payload.getString("device", "qt-client")));
+                            notifications_->create(result.userId, "login.new", "Новый вход в Aura",
+                                                   session->remoteAddr(), payload);
+                        }
                         return protocol::ok(request.id, result.payload);
                     });
 
@@ -368,6 +386,14 @@ void Server::registerHandlers() {
                         if (!result.ok) return protocol::error(request.id, result.code, result.message);
                         session->authenticate(result.userId, result.displayName, result.email, result.jwtId);
                         connections_.add(session);
+                        // Этап 13: вход через 2FA — тоже уведомление о входе.
+                        if (notifications_) {
+                            Json payload = Json::object();
+                            payload.set("device", Json(request.payload.getString("device", "qt-client")));
+                            payload.set("two_factor", Json(true));
+                            notifications_->create(result.userId, "login.new", "Новый вход в Aura (2FA)",
+                                                   session->remoteAddr(), payload);
+                        }
                         return protocol::ok(request.id, result.payload);
                     });
 
@@ -381,6 +407,12 @@ void Server::registerHandlers() {
     registerHandler("auth.confirm2fa", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
         const auto result = auth_->confirm2fa(session->userId(), request.payload.getString("code"),
                                               session->remoteAddr());
+        // Этап 13: включение 2FA — уведомление безопасности.
+        if (result.ok && notifications_) {
+            notifications_->create(session->userId(), "twofactor.enabled",
+                                   "Двухфакторная аутентификация включена",
+                                   "Вход теперь требует код из приложения-аутентификатора");
+        }
         return result.ok ? protocol::ok(request.id, result.payload)
                          : protocol::error(request.id, result.code, result.message);
     });
@@ -388,6 +420,12 @@ void Server::registerHandlers() {
     registerHandler("auth.disable2fa", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
         const auto result = auth_->disable2fa(session->userId(), request.payload.getString("password"),
                                               session->remoteAddr());
+        // Этап 13: отключение 2FA — обязательно уведомляем владельца.
+        if (result.ok && notifications_) {
+            notifications_->create(session->userId(), "twofactor.disabled",
+                                   "Двухфакторная аутентификация отключена",
+                                   "Если это были не вы — смените пароль");
+        }
         return result.ok ? protocol::ok(request.id, result.payload)
                          : protocol::error(request.id, result.code, result.message);
     });
@@ -498,8 +536,24 @@ void Server::registerHandlers() {
         const auto result = agent_->ask(session->userId(), payloadChatId(request.payload),
                                         request.payload.getString("message"), request.payload.get("peers"),
                                         request.payload.getBool("execute", true));
-        return result.ok ? protocol::ok(request.id, result.payload)
-                         : protocol::error(request.id, result.code, result.message);
+        if (!result.ok) return protocol::error(request.id, result.code, result.message);
+        // Этап 13: действие, ожидающее подтверждения, — ещё и уведомление
+        // (in-app + push): пользователь увидит его, даже если закрыл клиент.
+        if (notifications_) {
+            const Json results = result.payload.get("results");
+            for (const auto& item : results.items()) {
+                if (!item.getBool("requires_confirmation", false)) continue;
+                Json notifyPayload = Json::object();
+                notifyPayload.set("confirmation_id", Json(item.getInt("confirmation_id")));
+                notifyPayload.set("tool", Json(item.getString("tool")));
+                notifications_->create(session->userId(), "confirmation.requested",
+                                       "Нужно подтверждение",
+                                       item.getString("summary", "Опасная операция ожидает решения"),
+                                       notifyPayload);
+                break;  // одно уведомление на запрос
+            }
+        }
+        return protocol::ok(request.id, result.payload);
     });
 
     registerHandler("agent.negotiate", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
@@ -522,8 +576,18 @@ void Server::registerHandlers() {
                                               request.payload.getString("topic", "встреча"),
                                               static_cast<int>(request.payload.getInt("duration_minutes", 60)),
                                               static_cast<int>(request.payload.getInt("window_hours", 96)));
-        return result.ok ? protocol::ok(request.id, result.payload)
-                         : protocol::error(request.id, result.code, result.message);
+        if (!result.ok) return protocol::error(request.id, result.code, result.message);
+        // Этап 13: собеседник узнаёт о переговорах даже офлайн.
+        if (notifications_) {
+            Json notifyPayload = Json::object();
+            notifyPayload.set("initiator_id", Json(session->userId()));
+            notifyPayload.set("topic", Json(request.payload.getString("topic", "встреча")));
+            notifications_->create(peer->id, "a2a.proposal",
+                                   "Аура начала переговоры",
+                                   "Тема: " + request.payload.getString("topic", "встреча"),
+                                   notifyPayload);
+        }
+        return protocol::ok(request.id, result.payload);
     });
 
     registerHandler("speech.transcribe", [this](std::shared_ptr<Session>, const protocol::Request& request) {
@@ -730,6 +794,51 @@ void Server::registerHandlers() {
     registerHandler("integrations.sync", [this](std::shared_ptr<Session> session,
                                                 const protocol::Request& request) {
         const auto result = integrations_->sync(session->userId(), request.payload.getInt("id"));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    // Уведомления (этап 13): in-app «входящая» + устройства push-доставки.
+    registerHandler("notifications.list", [this](std::shared_ptr<Session> session,
+                                                 const protocol::Request& request) {
+        const auto result = notifications_->list(
+            session->userId(),
+            request.payload.getBool("unread", false),
+            boundedLimit(request.payload, "limit", 50, 200));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    // id отсутствует или 0 — отметить все прочитанными.
+    registerHandler("notifications.read", [this](std::shared_ptr<Session> session,
+                                                 const protocol::Request& request) {
+        const auto result = notifications_->markRead(session->userId(),
+                                                     request.payload.getInt("id", 0));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("devices.push.register", [this](std::shared_ptr<Session> session,
+                                                    const protocol::Request& request) {
+        const auto result = notifications_->registerDevice(
+            session->userId(),
+            request.payload.getString("platform", "apns"),
+            request.payload.getString("token"));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("devices.push.list", [this](std::shared_ptr<Session> session,
+                                                const protocol::Request& request) {
+        const auto result = notifications_->listDevices(session->userId());
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("devices.push.revoke", [this](std::shared_ptr<Session> session,
+                                                  const protocol::Request& request) {
+        const auto result = notifications_->revokeDevice(session->userId(),
+                                                         request.payload.getInt("id"));
         return result.ok ? protocol::ok(request.id, result.payload)
                          : protocol::error(request.id, result.code, result.message);
     });

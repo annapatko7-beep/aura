@@ -79,6 +79,10 @@ class AppStore : public QObject {
     Q_PROPERTY(QVariantList integrationProviders READ integrationProviders NOTIFY integrationsChanged)
     Q_PROPERTY(QVariantList integrations READ integrations NOTIFY integrationsChanged)
     Q_PROPERTY(QString integrationUrl READ integrationUrl NOTIFY integrationUrlChanged)
+    // Этап 13: уведомления — in-app «входящая» и push-устройства.
+    Q_PROPERTY(QVariantList notifications READ notifications NOTIFY notificationsChanged)
+    Q_PROPERTY(int unreadNotifications READ unreadNotifications NOTIFY notificationsChanged)
+    Q_PROPERTY(QVariantList pushDevices READ pushDevices NOTIFY pushDevicesChanged)
 
 public:
     explicit AppStore(QObject* parent = nullptr);
@@ -138,6 +142,10 @@ public:
     QVariantList integrationProviders() const { return integrationProviders_; }
     QVariantList integrations() const { return integrations_; }
     QString integrationUrl() const { return integrationUrl_; }
+    // Этап 13
+    QVariantList notifications() const { return notifications_; }
+    int unreadNotifications() const { return unreadNotifications_; }
+    QVariantList pushDevices() const { return pushDevices_; }
 
 public slots:
     void login(const QString& email, const QString& password);
@@ -205,6 +213,11 @@ public slots:
                              const QString& state);   // обмен code на токены
     void revokeIntegration(qint64 connectionId);      // отозвать доступ
     void syncIntegration(qint64 connectionId);        // синхронизировать сейчас
+    // Этап 13: уведомления и push-устройства.
+    void loadNotifications();
+    void markNotificationsRead(qint64 notificationId = 0);  // 0 — все
+    void loadPushDevices();
+    void revokePushDevice(qint64 deviceId);
 
 signals:
     void connectedChanged();
@@ -245,6 +258,9 @@ signals:
     // Этап 9: интеграции
     void integrationsChanged();
     void integrationUrlChanged();
+    // Этап 13: уведомления
+    void notificationsChanged();
+    void pushDevicesChanged();
 
 private:
     void handleEvent(const QString& name, const QJsonObject& payload);
@@ -338,6 +354,10 @@ private:
     QString integrationUrl_;             // последняя ссылка на consent-экран
     QString pendingProvider_;            // провайдер текущего OAuth-потока
     QTcpServer* redirectServer_ = nullptr;  // 127.0.0.1:<порт>/callback
+    // Этап 13: уведомления
+    QVariantList notifications_;         // «входящая»: свежие первыми
+    int unreadNotifications_ = 0;        // счётчик непрочитанных (бейдж)
+    QVariantList pushDevices_;           // зарегистрированные push-устройства
 };
 
 }  // namespace aura

@@ -254,6 +254,62 @@ class GoogleMock:
             writer.close()
 
 
+class PushMock:
+    """Приёмник push-конвертов (этап 13).
+
+    Поднимается при AURA_E2E_PUSH_MOCK=1; C++-сервер должен быть запущен с
+    AURA_PUSH_DRIVER=webhook и AURA_PUSH_WEBHOOK_URL=http://127.0.0.1:<порт>/push.
+    Сохраняет JSON-тела POST /push — так проверяется веерная рассылка
+    (apns-конверт с токеном, kind и aps.alert).
+    """
+
+    def __init__(self, port: int):
+        self.port = port
+        self.envelopes: list[Dict[str, Any]] = []
+        self._server: asyncio.AbstractServer | None = None
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", self.port)
+
+    async def stop(self) -> None:
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
+
+    async def _handle(self, reader: asyncio.StreamReader,
+                      writer: asyncio.StreamWriter) -> None:
+        try:
+            request_line = (await reader.readline()).decode("latin-1").strip()
+            if not request_line:
+                return
+            headers: Dict[str, str] = {}
+            while True:
+                line = await reader.readline()
+                if line in (b"\r\n", b"\n", b""):
+                    break
+                key, _, value = line.decode("latin-1").partition(":")
+                headers[key.strip().lower()] = value.strip()
+            body = b""
+            if headers.get("content-length"):
+                body = await reader.readexactly(int(headers["content-length"]))
+            parts = request_line.split(" ")
+            target = parts[1] if len(parts) > 1 else "/"
+            if parts[0] == "POST" and target == "/push":
+                try:
+                    self.envelopes.append(json.loads(body.decode("utf-8")))
+                except json.JSONDecodeError:
+                    pass
+            payload = b"{}"
+            head = ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                    f"Content-Length: {len(payload)}\r\nConnection: close\r\n\r\n")
+            writer.write(head.encode("latin-1") + payload)
+            await writer.drain()
+        except (ConnectionResetError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+
+
 async def main() -> int:
     print(f"Aura E2E → {SERVER_URL} (прогон {RUN})\n")
 
@@ -263,6 +319,12 @@ async def main() -> int:
     if os.environ.get("AURA_E2E_GOOGLE_MOCK") == "1":
         google_mock = GoogleMock(int(os.environ.get("AURA_E2E_GOOGLE_MOCK_PORT", "9081")))
         await google_mock.start()
+
+    # Push mock (этап 13): шлюз вебхуков, ловит apns-конверты.
+    push_mock: PushMock | None = None
+    if os.environ.get("AURA_E2E_PUSH_MOCK") == "1":
+        push_mock = PushMock(int(os.environ.get("AURA_E2E_PUSH_MOCK_PORT", "9082")))
+        await push_mock.start()
 
     anna = Client("anna")
     anya = Client("anya")
@@ -507,6 +569,63 @@ async def main() -> int:
     })
     check(remind.get("payload", {}).get("task_id", 0) > 0,
           "create_reminder создал задачу", remind.get("payload"))
+
+    # ------------------------------------------- уведомления и push (этап 13)
+    print("\n3e. Уведомления и push-доставка (этап 13)")
+
+    # Входы Анны уже создали уведомления login.new.
+    listed = await anna.call("notifications.list", {})
+    items = listed.get("payload", {}).get("notifications", [])
+    check(any(n.get("kind") == "login.new" for n in items),
+          "notifications.list содержит login.new", [n.get("kind") for n in items])
+    check(listed.get("payload", {}).get("unread", 0) >= 1, "есть непрочитанные",
+          listed.get("payload", {}).get("unread"))
+
+    # Регистрация push-устройства (webhook-платформа ловится PushMock).
+    reg = await anna.call("devices.push.register",
+                          {"platform": "webhook", "token": "e2e-device-1"})
+    device_id = reg.get("payload", {}).get("id", 0)
+    check(reg.get("type") == "ok" and device_id > 0,
+          "devices.push.register принял токен", reg)
+    devices = await anna.call("devices.push.list", {})
+    device_items = devices.get("payload", {}).get("devices", [])
+    check(len(device_items) == 1 and "token" not in device_items[0],
+          "devices.push.list без токена", device_items)
+
+    # Напоминание с прошедшим сроком → уведомление task.due + push-конверт.
+    envelopes_before = len(push_mock.envelopes) if push_mock else 0
+    await anna.call("tasks.create", {"title": "Полить цветы",
+                                     "remind_at": "2020-01-01T00:00:00.000Z"})
+    due2 = await anna.call("tasks.due", {})
+    check(due2.get("payload", {}).get("sent", 0) >= 1, "планировщик сработал повторно",
+          due2.get("payload"))
+    await asyncio.sleep(0.3)
+
+    unread = await anna.call("notifications.list", {"unread": True})
+    unread_items = unread.get("payload", {}).get("notifications", [])
+    check(any(n.get("kind") == "task.due" for n in unread_items),
+          "уведомление task.due создано", [n.get("kind") for n in unread_items])
+
+    if push_mock is not None:
+        check(len(push_mock.envelopes) > envelopes_before,
+              "push-шлюз получил конверт", len(push_mock.envelopes))
+        if push_mock.envelopes:
+            envelope = push_mock.envelopes[-1]
+            check(envelope.get("token") == "e2e-device-1"
+                  and envelope.get("kind") == "task.due"
+                  and envelope.get("apns", {}).get("payload", {})
+                      .get("aps", {}).get("alert", {}).get("title") == "Напоминание",
+                  "конверт: токен, kind и aps.alert", envelope)
+
+    # Прочитать все → непрочитанных нет.
+    read_all = await anna.call("notifications.read", {})
+    check(read_all.get("payload", {}).get("unread", -1) == 0,
+          "notifications.read очистил непрочитанные", read_all.get("payload"))
+
+    # Отзыв устройства.
+    revoked_device = await anna.call("devices.push.revoke", {"id": device_id})
+    check(revoked_device.get("payload", {}).get("revoked") is True,
+          "devices.push.revoke отозвал устройство", revoked_device.get("payload"))
 
     # ------------------------------------------------------------ речь (STT)
     print("\n3b. Распознавание речи (C++-сервер → Python AI Service)")
@@ -772,6 +891,8 @@ async def main() -> int:
     await anya.close()
     if google_mock is not None:
         await google_mock.stop()
+    if push_mock is not None:
+        await push_mock.stop()
 
     print(f"\nпроверок: {checks}, ошибок: {len(failures)}")
     if failures:

@@ -1212,7 +1212,165 @@ public:
         return DatabaseError::failure("состояние OAuth не найдено");
     }
 
+    // ------------------------------------------------------------ notifications
+    DatabaseError createNotification(const NotificationRecord& record, long long& outId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const long long id = nextId("notifications");
+        Json entry = Json::object();
+        entry.set("id", Json(id));
+        entry.set("user_id", Json(record.userId));
+        entry.set("kind", Json(record.kind));
+        entry.set("title", Json(record.title));
+        entry.set("body", Json(record.body));
+        entry.set("payload", record.payload);
+        entry.set("read_at", Json(std::string()));
+        entry.set("created_at", Json(isoNow()));
+        table("notifications").push(entry);
+        flush();
+        outId = id;
+        return DatabaseError::success();
+    }
+
+    std::vector<NotificationRecord> listNotifications(long long userId,
+                                                      bool unreadOnly,
+                                                      int limit) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const int ceiling = limit > 0 ? limit : 50;
+        std::vector<NotificationRecord> result;
+        const Json::Array& entries = table("notifications").items();
+        // Свежие первыми (аналог ORDER BY id DESC).
+        for (auto it = entries.rbegin();
+             it != entries.rend() && static_cast<int>(result.size()) < ceiling; ++it) {
+            if (it->getInt("user_id") != userId) continue;
+            if (unreadOnly && !it->getString("read_at").empty()) continue;
+            result.push_back(toNotification(*it));
+        }
+        return result;
+    }
+
+    long long unreadNotificationCount(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        long long count = 0;
+        for (const auto& entry : table("notifications").items()) {
+            if (entry.getInt("user_id") != userId) continue;
+            if (entry.getString("read_at").empty()) ++count;
+        }
+        return count;
+    }
+
+    DatabaseError markNotificationRead(long long userId, long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("notifications")) {
+            if (entry.getInt("id") != id || entry.getInt("user_id") != userId) continue;
+            entry.set("read_at", Json(isoNow()));
+            flush();
+            return DatabaseError::success();
+        }
+        return DatabaseError::failure("уведомление не найдено");
+    }
+
+    DatabaseError markAllNotificationsRead(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        bool touched = false;
+        for (auto& entry : mutableTable("notifications")) {
+            if (entry.getInt("user_id") != userId) continue;
+            if (!entry.getString("read_at").empty()) continue;
+            entry.set("read_at", Json(isoNow()));
+            touched = true;
+        }
+        if (touched) flush();
+        return DatabaseError::success();
+    }
+
+    // ------------------------------------------------------------- push_devices
+    DatabaseError registerPushDevice(long long userId,
+                                     const std::string& platform,
+                                     const std::string& token,
+                                     long long& outId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("push_devices")) {
+            if (entry.getInt("user_id") == userId && entry.getString("token") == token) {
+                entry.set("platform", Json(platform));
+                entry.set("enabled", Json(true));
+                flush();
+                outId = entry.getInt("id");
+                return DatabaseError::success();
+            }
+        }
+        const long long id = nextId("push_devices");
+        Json entry = Json::object();
+        entry.set("id", Json(id));
+        entry.set("user_id", Json(userId));
+        entry.set("platform", Json(platform));
+        entry.set("token", Json(token));
+        entry.set("enabled", Json(true));
+        entry.set("created_at", Json(isoNow()));
+        entry.set("last_used_at", Json(std::string()));
+        table("push_devices").push(entry);
+        flush();
+        outId = id;
+        return DatabaseError::success();
+    }
+
+    std::vector<PushDeviceRecord> listPushDevices(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<PushDeviceRecord> result;
+        for (const auto& entry : table("push_devices").items()) {
+            if (entry.getInt("user_id") != userId) continue;
+            result.push_back(toPushDevice(entry));
+        }
+        return result;
+    }
+
+    DatabaseError touchPushDevice(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("push_devices")) {
+            if (entry.getInt("id") != id) continue;
+            entry.set("last_used_at", Json(isoNow()));
+            flush();
+            return DatabaseError::success();
+        }
+        return DatabaseError::failure("устройство не найдено");
+    }
+
+    DatabaseError deletePushDevice(long long userId, long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Json::Array& entries = mutableTable("push_devices");
+        for (auto it = entries.begin(); it != entries.end(); ++it) {
+            if (it->getInt("id") != id || it->getInt("user_id") != userId) continue;
+            entries.erase(it);
+            flush();
+            return DatabaseError::success();
+        }
+        return DatabaseError::failure("устройство не найдено");
+    }
+
 private:
+    NotificationRecord toNotification(const Json& entry) const {
+        NotificationRecord record;
+        record.id = entry.getInt("id");
+        record.userId = entry.getInt("user_id");
+        record.kind = entry.getString("kind");
+        record.title = entry.getString("title");
+        record.body = entry.getString("body");
+        record.payload = entry.get("payload");
+        record.readAt = entry.getString("read_at");
+        record.createdAt = entry.getString("created_at");
+        return record;
+    }
+
+    PushDeviceRecord toPushDevice(const Json& entry) const {
+        PushDeviceRecord record;
+        record.id = entry.getInt("id");
+        record.userId = entry.getInt("user_id");
+        record.platform = entry.getString("platform", "apns");
+        record.token = entry.getString("token");
+        record.enabled = entry.getBool("enabled", true);
+        record.createdAt = entry.getString("created_at");
+        record.lastUsedAt = entry.getString("last_used_at");
+        return record;
+    }
+
     IntegrationConnectionRecord toIntegration(const Json& entry) const {
         IntegrationConnectionRecord record;
         record.id = entry.getInt("id");

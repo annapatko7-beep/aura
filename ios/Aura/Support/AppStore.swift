@@ -9,11 +9,13 @@ import AVFoundation
 import Foundation
 import SwiftUI
 import UIKit
+import UserNotifications
 
 enum AppTab: Hashable {
     case chats
     case tasks
     case confirmations
+    case notifications
     case settings
 }
 
@@ -48,6 +50,11 @@ final class AppStore: ObservableObject {
     @Published var permissions: [JSONValue] = []
     @Published var integrations: [JSONValue] = []
     @Published var integrationProviders: [JSONValue] = []
+
+    // Этап 13: in-app «входящая» уведомлений и push-устройства.
+    @Published var notifications: [JSONValue] = []
+    @Published var unreadNotifications: Int64 = 0
+    @Published var pushDevices: [JSONValue] = []
 
     @Published var tab: AppTab = .chats
     @Published var voiceOverlayVisible = false
@@ -179,6 +186,14 @@ final class AppStore: ObservableObject {
         authState = .loggedIn
         startEventLoop()
         await loadAll()
+        // Этап 13: «входящая» уведомлений + APNs-токен (если уже получен).
+        loadNotifications()
+        loadPushDevices()
+        if !pendingPushToken.isEmpty {
+            let token = pendingPushToken
+            pendingPushToken = ""
+            registerPushToken(token)
+        }
         setStatus("Добро пожаловать, \(userName)")
     }
 
@@ -218,6 +233,11 @@ final class AppStore: ObservableObject {
             if ttsEnabled {
                 speech.speak("Напоминание: \(payload.string("title"))")
             }
+        case AuraEventName.notificationNew:
+            // In-app «входящая»: добавляем в список и обновляем счётчик.
+            notifications.insert(payload, at: 0)
+            unreadNotifications += 1
+            updateBadge()
         default:
             break
         }
@@ -422,6 +442,79 @@ final class AppStore: ObservableObject {
                     setStatus("Синхронизировано: \(payload.string("profile_email"))")
                 }
             } catch { fail(error) }
+        }
+    }
+
+    // MARK: Уведомления и push (этап 13)
+
+    func loadNotifications() {
+        Task {
+            do {
+                let payload = try await client.notificationsList()
+                notifications = payload.array("notifications")
+                unreadNotifications = payload.int("unread")
+                updateBadge()
+            } catch { fail(error) }
+        }
+    }
+
+    func markNotificationsRead(id: Int64 = 0) {
+        Task {
+            do {
+                let payload = try await client.notificationsRead(id: id)
+                if id == 0 {
+                    notifications = notifications.map { item in
+                        var copy = item
+                        copy["read"] = .bool(true)
+                        return copy
+                    }
+                } else if let index = notifications.firstIndex(where: { $0.int("id") == id }) {
+                    notifications[index]["read"] = .bool(true)
+                }
+                unreadNotifications = payload.int("unread")
+                updateBadge()
+            } catch { fail(error) }
+        }
+    }
+
+    func loadPushDevices() {
+        Task {
+            do {
+                let payload = try await client.devicesPushList()
+                pushDevices = payload.array("devices")
+            } catch { fail(error) }
+        }
+    }
+
+    func revokePushDevice(id: Int64) {
+        Task {
+            do {
+                _ = try await client.devicesPushRevoke(id: id)
+                setStatus("Устройство отозвано")
+                loadPushDevices()
+            } catch { fail(error) }
+        }
+    }
+
+    /// APNs-токен из AppDelegate: регистрируем на сервере для push-доставки.
+    func registerPushToken(_ tokenHex: String) {
+        guard authState == .loggedIn, !tokenHex.isEmpty else {
+            pendingPushToken = tokenHex   // зарегистрируем после входа
+            return
+        }
+        Task {
+            do {
+                _ = try await client.devicesPushRegister(platform: "apns", token: tokenHex)
+                loadPushDevices()
+            } catch { fail(error) }
+        }
+    }
+
+    private var pendingPushToken = ""
+
+    private func updateBadge() {
+        Task { @MainActor in
+            UIApplication.shared.applicationIconBadgeNumber = Int(unreadNotifications)
         }
     }
 

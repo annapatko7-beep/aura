@@ -19,6 +19,10 @@ struct RootView: View {
                         .tabItem { Label("Подтверждения", systemImage: "exclamationmark.shield") }
                         .tag(AppTab.confirmations)
                         .badge(store.confirmations.count)
+                    NotificationsView()
+                        .tabItem { Label("Уведомления", systemImage: "bell") }
+                        .tag(AppTab.notifications)
+                        .badge(store.unreadNotifications > 0 ? Int(store.unreadNotifications) : 0)
                     SettingsView()
                         .tabItem { Label("Настройки", systemImage: "gearshape") }
                         .tag(AppTab.settings)

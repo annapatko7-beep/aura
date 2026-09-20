@@ -179,6 +179,8 @@ void AppStore::applyAuth(const QJsonObject& payload) {
     loadConfirmations();
     loadTasks();
     loadIntegrations();  // этап 9
+    loadNotifications(); // этап 13
+    loadPushDevices();   // этап 13
     setStatus(QStringLiteral("Добро пожаловать, %1").arg(userName_));
 }
 
@@ -819,6 +821,16 @@ void AppStore::handleEvent(const QString& name, const QJsonObject& payload) {
         speakImportant(QStringLiteral("Напоминание: %1").arg(title));
         return;
     }
+    if (name == QLatin1String("notification.new")) {
+        // Этап 13: серверное уведомление — в начало «входящей» + счётчик.
+        notifications_.prepend(payload.toVariantMap());
+        ++unreadNotifications_;
+        emit notificationsChanged();
+        setStatus(QStringLiteral("%1: %2")
+                      .arg(payload.value(QStringLiteral("title")).toString(),
+                           payload.value(QStringLiteral("body")).toString()));
+        return;
+    }
     if (name == QLatin1String("session.ready")) {
         setStatus(QStringLiteral("Сессия активна"));
     }
@@ -1457,6 +1469,81 @@ void AppStore::syncIntegration(qint64 connectionId) {
                                                .arg(payload.value(QStringLiteral("profile_email"))
                                                         .toString()));
                              }
+                         });
+}
+
+// ---------------------------------------------------------------------------
+// Этап 13: уведомления и push-устройства
+// ---------------------------------------------------------------------------
+
+void AppStore::loadNotifications() {
+    client_->sendRequest(QStringLiteral("notifications.list"), {},
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             const QJsonObject payload =
+                                 response.value(QStringLiteral("payload")).toObject();
+                             notifications_ = payload.value(QStringLiteral("notifications"))
+                                                  .toArray().toVariantList();
+                             unreadNotifications_ = payload.value(QStringLiteral("unread")).toInt();
+                             emit notificationsChanged();
+                         });
+}
+
+void AppStore::markNotificationsRead(qint64 notificationId) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), static_cast<double>(notificationId));
+    client_->sendRequest(QStringLiteral("notifications.read"), payload,
+                         [this, notificationId](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             // Локально гасим «непрочитанность», сервер даёт новый счётчик.
+                             for (auto& item : notifications_) {
+                                 QVariantMap map = item.toMap();
+                                 if (notificationId == 0 ||
+                                     static_cast<qint64>(map.value(QStringLiteral("id")).toDouble()) ==
+                                         notificationId) {
+                                     map.insert(QStringLiteral("read"), true);
+                                     item = map;
+                                 }
+                             }
+                             const QJsonObject result =
+                                 response.value(QStringLiteral("payload")).toObject();
+                             unreadNotifications_ = result.value(QStringLiteral("unread")).toInt();
+                             emit notificationsChanged();
+                         });
+}
+
+void AppStore::loadPushDevices() {
+    client_->sendRequest(QStringLiteral("devices.push.list"), {},
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             const QJsonObject payload =
+                                 response.value(QStringLiteral("payload")).toObject();
+                             pushDevices_ = payload.value(QStringLiteral("devices"))
+                                                .toArray().toVariantList();
+                             emit pushDevicesChanged();
+                         });
+}
+
+void AppStore::revokePushDevice(qint64 deviceId) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), static_cast<double>(deviceId));
+    client_->sendRequest(QStringLiteral("devices.push.revoke"), payload,
+                         [this](const QJsonObject&, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             setStatus(QStringLiteral("Push-устройство отозвано"));
+                             loadPushDevices();
                          });
 }
 

@@ -227,6 +227,35 @@ public final class AuraClient: @unchecked Sendable {
         try await request("integrations.sync", ["id": .from(id)])
     }
 
+    // MARK: - Уведомления и push-устройства (этап 13)
+
+    public func notificationsList(unreadOnly: Bool = false, limit: Int = 50) async throws -> JSONValue {
+        try await request("notifications.list", [
+            "unread": .bool(unreadOnly),
+            "limit": .from(Int64(limit))
+        ])
+    }
+
+    /// id = 0 (или не передан) — отметить прочитанными все.
+    public func notificationsRead(id: Int64 = 0) async throws -> JSONValue {
+        try await request("notifications.read", ["id": .from(id)])
+    }
+
+    public func devicesPushRegister(platform: String, token: String) async throws -> JSONValue {
+        try await request("devices.push.register", [
+            "platform": .string(platform),
+            "token": .string(token)
+        ])
+    }
+
+    public func devicesPushList() async throws -> JSONValue {
+        try await request("devices.push.list")
+    }
+
+    public func devicesPushRevoke(id: Int64) async throws -> JSONValue {
+        try await request("devices.push.revoke", ["id": .from(id)])
+    }
+
     // MARK: - Сервер
 
     public func serverInfo() async throws -> JSONValue {

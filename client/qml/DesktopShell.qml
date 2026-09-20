@@ -44,6 +44,7 @@ Item {
                         { glyph: "💬", label: "Чаты" },
                         { glyph: "✓", label: "Задачи" },
                         { glyph: "⚠", label: "Ждут" },
+                        { glyph: "🔔", label: "Пуши" },
                         { glyph: "⚙", label: "Ещё" }
                     ]
 
@@ -84,24 +85,27 @@ Item {
                                 }
                             }
 
-                            // Бейдж неподтверждённых опасных операций
+                            // Бейджи: неподтверждённые операции и непрочитанные уведомления
                             Rectangle {
-                                visible: railItem.index === 2 && App && App.confirmations.length > 0
+                                readonly property int badgeCount: railItem.index === 2 && App
+                                    ? App.confirmations.length
+                                    : (railItem.index === 3 && App ? App.unreadNotifications : 0)
+                                visible: badgeCount > 0
                                 anchors.right: parent.right
                                 anchors.top: parent.top
                                 anchors.margins: 3
                                 width: badgeText.width + 10
                                 height: 16
                                 radius: AuraTheme.radiusPill
-                                color: AuraTheme.warning
+                                color: railItem.index === 2 ? AuraTheme.warning : AuraTheme.accent
                                 Text {
                                     id: badgeText
                                     anchors.centerIn: parent
-                                    text: App ? String(App.confirmations.length) : "0"
+                                    text: String(parent.badgeCount)
                                     font.family: AuraTheme.fontFamily
                                     font.pixelSize: 9
                                     font.weight: Font.Bold
-                                    color: "#1A1400"
+                                    color: railItem.index === 2 ? "#1A1400" : "#04121F"
                                 }
                             }
                         }
@@ -116,6 +120,10 @@ Item {
                                 if (railItem.index === 1 && App) App.loadTasks()
                                 if (railItem.index === 2 && App) App.loadConfirmations()
                                 if (railItem.index === 3 && App) {
+                                    App.loadNotifications()
+                                    App.loadPushDevices()
+                                }
+                                if (railItem.index === 4 && App) {
                                     App.loadPermissions()
                                     App.loadIntegrations()
                                 }
@@ -125,7 +133,8 @@ Item {
                         ToolTip.visible: railArea.containsMouse
                         ToolTip.delay: 500
                         ToolTip.text: railItem.index === 2 ? "Подтверждения"
-                                      : (railItem.index === 3 ? "Настройки" : railItem.modelData.label)
+                                      : (railItem.index === 3 ? "Уведомления"
+                                      : (railItem.index === 4 ? "Настройки" : railItem.modelData.label))
                     }
                 }
 
@@ -296,7 +305,37 @@ Item {
                 }
             }
 
-            // 3 — Настройки
+            // 3 — Уведомления (этап 13)
+            Item {
+                Flickable {
+                    anchors.fill: parent
+                    anchors.margins: AuraTheme.spaceLg
+                    contentHeight: notifyColumn.height
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    ColumnLayout {
+                        id: notifyColumn
+                        width: parent.width
+                        spacing: AuraTheme.spaceMd
+
+                        Text {
+                            text: "Уведомления"
+                            font.family: AuraTheme.fontFamily
+                            font.pixelSize: AuraTheme.fontTitle
+                            font.weight: Font.DemiBold
+                            color: AuraTheme.textPrimary
+                        }
+
+                        NotificationsPanel {
+                            Layout.fillWidth: true
+                            backdrop: shell.backdropRef
+                        }
+                    }
+                }
+            }
+
+            // 4 — Настройки
             SettingsPage {
                 embedded: true
             }

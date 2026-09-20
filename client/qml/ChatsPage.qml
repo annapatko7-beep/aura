@@ -11,6 +11,7 @@ Item {
 
     signal openChat(int chatId)
     signal openSettings()
+    signal openNotifications()
 
     ColumnLayout {
         anchors.fill: parent
@@ -48,6 +49,48 @@ Item {
                         font.family: AuraTheme.fontFamily
                         font.pixelSize: AuraTheme.fontMicro
                         color: App && App.connected ? AuraTheme.textSecondary : AuraTheme.warning
+                    }
+                }
+
+                // Этап 13: «входящая» уведомлений (бейдж — непрочитанные).
+                Item {
+                    implicitWidth: bellButton.implicitWidth
+                    implicitHeight: 40
+
+                    GlassButton {
+                        id: bellButton
+                        variant: "quiet"
+                        text: ""
+                        glyph: "🔔"
+                        implicitWidth: 48
+                        implicitHeight: 40
+                        onClicked: {
+                            if (App) {
+                                App.loadNotifications()
+                                App.loadPushDevices()
+                            }
+                            page.openNotifications()
+                        }
+                    }
+
+                    Rectangle {
+                        visible: App && App.unreadNotifications > 0
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 2
+                        width: bellBadge.width + 8
+                        height: 15
+                        radius: AuraTheme.radiusPill
+                        color: AuraTheme.accent
+                        Text {
+                            id: bellBadge
+                            anchors.centerIn: parent
+                            text: App ? String(App.unreadNotifications) : "0"
+                            font.family: AuraTheme.fontFamily
+                            font.pixelSize: 9
+                            font.weight: Font.Bold
+                            color: "#04121F"
+                        }
                     }
                 }
 

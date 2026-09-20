@@ -1420,7 +1420,173 @@ public:
         return DatabaseError::success();
     }
 
+    // ------------------------------------------------------------ notifications
+    DatabaseError createNotification(const NotificationRecord& record, long long& outId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        if (!execute(
+                "INSERT INTO notifications (user_id, kind, title, body, payload) "
+                "VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id",
+                {std::to_string(record.userId), record.kind, record.title, record.body,
+                 record.payload.dump()},
+                &result)) {
+            PQclear(result);
+            return DatabaseError::failure(lastError_);
+        }
+        if (PQntuples(result) > 0) outId = std::atoll(value_(result, 0, 0).c_str());
+        PQclear(result);
+        return DatabaseError::success();
+    }
+
+    std::vector<NotificationRecord> listNotifications(long long userId,
+                                                      bool unreadOnly,
+                                                      int limit) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<NotificationRecord> entries;
+        PGresult* result = nullptr;
+        const std::string query = notificationSelect() + " WHERE user_id = $1" +
+                                  (unreadOnly ? " AND read_at IS NULL" : "") +
+                                  " ORDER BY id DESC LIMIT $2";
+        if (!execute(query, {std::to_string(userId), std::to_string(limit > 0 ? limit : 50)},
+                     &result)) {
+            return entries;
+        }
+        for (int row = 0; row < PQntuples(result); ++row) entries.push_back(readNotification(result, row));
+        PQclear(result);
+        return entries;
+    }
+
+    long long unreadNotificationCount(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        long long count = 0;
+        if (execute("SELECT count(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL",
+                    {std::to_string(userId)}, &result) &&
+            PQntuples(result) > 0) {
+            count = std::atoll(value_(result, 0, 0).c_str());
+        }
+        PQclear(result);
+        return count;
+    }
+
+    DatabaseError markNotificationRead(long long userId, long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute("UPDATE notifications SET read_at = now() WHERE id = $1 AND user_id = $2",
+                     {std::to_string(id), std::to_string(userId)}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool updated = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!updated) return DatabaseError::failure("уведомление не найдено");
+        return DatabaseError::success();
+    }
+
+    DatabaseError markAllNotificationsRead(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute("UPDATE notifications SET read_at = now() WHERE user_id = $1 AND read_at IS NULL",
+                     {std::to_string(userId)}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        PQclear(res);
+        return DatabaseError::success();
+    }
+
+    // ------------------------------------------------------------- push_devices
+    DatabaseError registerPushDevice(long long userId,
+                                     const std::string& platform,
+                                     const std::string& token,
+                                     long long& outId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        if (!execute(
+                "INSERT INTO push_devices (user_id, platform, token) VALUES ($1, $2, $3) "
+                "ON CONFLICT (user_id, token) DO UPDATE SET "
+                "platform = EXCLUDED.platform, enabled = TRUE RETURNING id",
+                {std::to_string(userId), platform, token}, &result)) {
+            PQclear(result);
+            return DatabaseError::failure(lastError_);
+        }
+        if (PQntuples(result) > 0) outId = std::atoll(value_(result, 0, 0).c_str());
+        PQclear(result);
+        return DatabaseError::success();
+    }
+
+    std::vector<PushDeviceRecord> listPushDevices(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<PushDeviceRecord> entries;
+        PGresult* result = nullptr;
+        if (!execute(
+                "SELECT id, user_id, platform, token, enabled, "
+                "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                "to_char(last_used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM push_devices WHERE user_id = $1 ORDER BY id",
+                {std::to_string(userId)}, &result)) {
+            return entries;
+        }
+        for (int row = 0; row < PQntuples(result); ++row) {
+            PushDeviceRecord record;
+            record.id = std::atoll(value_(result, row, 0).c_str());
+            record.userId = std::atoll(value_(result, row, 1).c_str());
+            record.platform = value_(result, row, 2);
+            record.token = value_(result, row, 3);
+            record.enabled = value_(result, row, 4) == "t";
+            record.createdAt = value_(result, row, 5);
+            record.lastUsedAt = value_(result, row, 6);
+            entries.push_back(record);
+        }
+        PQclear(result);
+        return entries;
+    }
+
+    DatabaseError touchPushDevice(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute("UPDATE push_devices SET last_used_at = now() WHERE id = $1",
+                     {std::to_string(id)}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool updated = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!updated) return DatabaseError::failure("устройство не найдено");
+        return DatabaseError::success();
+    }
+
+    DatabaseError deletePushDevice(long long userId, long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute("DELETE FROM push_devices WHERE id = $1 AND user_id = $2",
+                     {std::to_string(id), std::to_string(userId)}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool deleted = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!deleted) return DatabaseError::failure("устройство не найдено");
+        return DatabaseError::success();
+    }
+
 private:
+    static std::string notificationSelect() {
+        return "SELECT id, user_id, kind, title, body, payload::text, "
+               "to_char(read_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+               "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+               "FROM notifications";
+    }
+
+    NotificationRecord readNotification(PGresult* result, int row) const {
+        NotificationRecord record;
+        record.id = std::atoll(value_(result, row, 0).c_str());
+        record.userId = std::atoll(value_(result, row, 1).c_str());
+        record.kind = value_(result, row, 2);
+        record.title = value_(result, row, 3);
+        record.body = value_(result, row, 4);
+        record.payload = Json::parse(value_(result, row, 5), nullptr);
+        record.readAt = value_(result, row, 6);
+        record.createdAt = value_(result, row, 7);
+        return record;
+    }
+
     static std::string integrationSelect() {
         return "SELECT id, user_id, provider, account, scope, token_encrypted, status, last_error, "
                "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), "

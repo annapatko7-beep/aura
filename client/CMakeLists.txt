@@ -46,6 +46,7 @@ qt_add_qml_module(aura-client
         qml/components/ConfirmationPanel.qml
         qml/components/TasksPanel.qml
         qml/components/ChatList.qml
+        qml/components/NotificationsPanel.qml
 )
 
 target_link_libraries(aura-client PRIVATE

@@ -309,6 +309,40 @@ CREATE TABLE IF NOT EXISTS integration_oauth_states (
 
 CREATE INDEX IF NOT EXISTS integration_oauth_states_user_idx ON integration_oauth_states (user_id);
 
+-- In-app уведомления (этап 13): единая «входящая» для событий, которые
+-- пользователь мог пропустить (напоминание, подтверждение, A2A-предложение,
+-- новый вход, изменение 2FA).
+CREATE TABLE IF NOT EXISTS notifications (
+    id         BIGSERIAL     PRIMARY KEY,
+    user_id    BIGINT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind       TEXT          NOT NULL,
+    title      TEXT          NOT NULL,
+    body       TEXT          NOT NULL DEFAULT '',
+    payload    JSONB         NOT NULL DEFAULT '{}'::jsonb,
+    read_at    TIMESTAMPTZ,
+    created_at TIMESTAMPTZ   NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications (user_id, id DESC);
+CREATE INDEX IF NOT EXISTS notifications_unread_idx ON notifications (user_id)
+    WHERE read_at IS NULL;
+
+-- Устройства для push (этап 13): APNs-токены iOS. Доставка — через драйвер
+-- (dev|webhook); реальный APNs терминирует push-шлюз за TLS-прокси.
+CREATE TABLE IF NOT EXISTS push_devices (
+    id           BIGSERIAL     PRIMARY KEY,
+    user_id      BIGINT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform     TEXT          NOT NULL DEFAULT 'apns'
+                 CHECK (platform IN ('apns', 'webhook', 'dev')),
+    token        TEXT          NOT NULL,
+    enabled      BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    last_used_at TIMESTAMPTZ,
+    UNIQUE (user_id, token)
+);
+
+CREATE INDEX IF NOT EXISTS push_devices_user_idx ON push_devices (user_id);
+
 -- --------------------------------------------------------------- Триггер ---
 CREATE OR REPLACE FUNCTION aura_touch_updated_at() RETURNS trigger AS $$
 BEGIN

@@ -80,8 +80,16 @@ public enum JSONValue: Codable, Equatable, Sendable {
     }
 
     public subscript(key: String) -> JSONValue? {
-        if case .object(let value) = self { return value[key] }
-        return nil
+        get {
+            if case .object(let value) = self { return value[key] }
+            return nil
+        }
+        set {
+            // Запись допустима только в объект; прочие варианты не изменяем.
+            guard case .object(var value) = self else { return }
+            value[key] = newValue
+            self = .object(value)
+        }
     }
 
     public func string(_ key: String, default fallback: String = "") -> String {

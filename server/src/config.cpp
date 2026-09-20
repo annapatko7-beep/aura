@@ -59,6 +59,10 @@ Config Config::fromEnv() {
     config.googleCalendarUrl = envOr("AURA_GOOGLE_CALENDAR_URL", config.googleCalendarUrl);
     config.googleGmailUrl = envOr("AURA_GOOGLE_GMAIL_URL", config.googleGmailUrl);
     config.oauthStateTtlSec = intOr("AURA_OAUTH_STATE_TTL", config.oauthStateTtlSec);
+    config.pushDriver = envOr("AURA_PUSH_DRIVER", config.pushDriver);
+    config.pushWebhookUrl = envOr("AURA_PUSH_WEBHOOK_URL", config.pushWebhookUrl);
+    config.apnsTopic = envOr("AURA_APNS_TOPIC", config.apnsTopic);
+    config.apnsUrl = envOr("AURA_APNS_URL", config.apnsUrl);
     config.logLevel = envOr("AURA_LOG_LEVEL", config.logLevel);
     return config;
 }

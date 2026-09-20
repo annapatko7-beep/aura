@@ -983,20 +983,40 @@ TEST(server_session_delivers_frames_over_socket) {
     payload.set("hello", Json("мир"));
     session->send(aura::protocol::event("test.event", payload));
 
-    // Читаем кадр из второго конца socketpair
-    char buffer[1024];
-    const ssize_t received = ::recv(fixture.observerFd, buffer, sizeof(buffer), 0);
-    CHECK(received > 0);
-    std::string raw(buffer, static_cast<std::size_t>(received));
-    std::size_t consumed = 0;
-    aura::ws::Frame frame;
-    std::string error;
+    // Читаем кадры из второго конца socketpair, пока не встретим test.event.
+    // Вход (внутри registerUser) теперь порождает событие notification.new
+    // («Новый вход в Aura», этап 13) — проверяем, что оно приходит первым.
     // Кадр пришёл от сервера, поэтому маска в нём запрещена (requireMask=false).
-    CHECK(aura::ws::decodeFrame(raw, sizeof(buffer), consumed, frame, error, false) ==
-          aura::ws::DecodeResult::Complete);
-    const Json decoded = Json::parse(frame.payload);
-    CHECK_EQ(decoded.getString("event"), std::string("test.event"));
-    CHECK_EQ(decoded.get("payload").getString("hello"), std::string("мир"));
+    std::string raw;
+    bool sawNotification = false;
+    bool sawTestEvent = false;
+    Json testEvent;
+    for (int attempt = 0; attempt < 8 && !sawTestEvent; ++attempt) {
+        char buffer[1024];
+        const ssize_t received = ::recv(fixture.observerFd, buffer, sizeof(buffer), 0);
+        CHECK(received > 0);
+        raw.append(buffer, static_cast<std::size_t>(received));
+        while (true) {
+            aura::ws::Frame frame;
+            std::string error;
+            std::size_t consumed = 0;
+            const auto result =
+                aura::ws::decodeFrame(raw, raw.size(), consumed, frame, error, false);
+            if (result != aura::ws::DecodeResult::Complete) break;
+            raw.erase(0, consumed);
+            const Json decoded = Json::parse(frame.payload);
+            if (decoded.getString("event") == std::string("notification.new")) {
+                sawNotification = true;
+            } else if (decoded.getString("event") == std::string("test.event")) {
+                sawTestEvent = true;
+                testEvent = decoded;
+                break;
+            }
+        }
+    }
+    CHECK(sawNotification);
+    CHECK(sawTestEvent);
+    CHECK_EQ(testEvent.get("payload").getString("hello"), std::string("мир"));
 }
 
 TEST(server_memory_and_preferences) {
@@ -1708,6 +1728,124 @@ TEST(integrations_list_hides_secret) {
 }
 
 }  // namespace
+
+// --- Этап 13: уведомления и push-устройства -------------------------------
+
+TEST(server_notifications_flow) {
+    Fixture fixture;
+    auto session = fixture.makeSession("notify");
+    fixture.registerUser(session, "nina@example.com", "Нина");
+
+    // Вход внутри registerUser уже создал уведомление login.new.
+    const Json listed = integration::payloadOf(fixture.call(session, "notifications.list"));
+    CHECK(listed.getInt("unread") >= 1);
+    const Json notifications = listed.get("notifications");
+    bool sawLogin = false;
+    long long loginId = 0;
+    for (const auto& item : notifications.items()) {
+        if (item.getString("kind") == std::string("login.new")) {
+            sawLogin = true;
+            loginId = item.getInt("id");
+            CHECK_EQ(item.getString("title"), std::string("Новый вход в Aura"));
+            CHECK_EQ(item.getBool("read"), false);
+        }
+    }
+    CHECK(sawLogin);
+
+    // Пометить прочитанным: непрочитанных становится меньше, повтор — не ошибка.
+    Json readOne = Json::object();
+    readOne.set("id", Json(loginId));
+    const Json afterRead = integration::payloadOf(fixture.call(session, "notifications.read", readOne));
+    CHECK_EQ(afterRead.getInt("unread"), listed.getInt("unread") - 1);
+    CHECK_EQ(fixture.call(session, "notifications.read", readOne).getString("type"), std::string("ok"));
+
+    // Включение 2FA порождает уведомление безопасности.
+    const Json setup = fixture.call(session, "auth.setup2fa");
+    CHECK_EQ(setup.getString("type"), std::string("ok"));
+    std::string rawSecret;
+    CHECK(aura::totp::decodeSecretBase32(setup.get("payload").getString("secret"), rawSecret));
+    Json confirm = Json::object();
+    confirm.set("code", Json(aura::totp::codeNow(rawSecret)));
+    CHECK_EQ(fixture.call(session, "auth.confirm2fa", confirm).getString("type"), std::string("ok"));
+
+    // Фильтр непрочитанных видит twofactor.enabled.
+    Json unreadReq = Json::object();
+    unreadReq.set("unread", Json(true));
+    const Json unreadList = integration::payloadOf(fixture.call(session, "notifications.list", unreadReq));
+    // Именованная переменная: get() возвращает по значению, items() — ссылку
+    // внутрь него (временный Json в range-for оставил бы ссылку висячей).
+    const Json unreadItems = unreadList.get("notifications");
+    bool saw2fa = false;
+    for (const auto& item : unreadItems.items()) {
+        if (item.getString("kind") == std::string("twofactor.enabled")) saw2fa = true;
+    }
+    CHECK(saw2fa);
+
+    // «Прочитать все» (без id) очищает непрочитанные.
+    CHECK_EQ(fixture.call(session, "notifications.read").getString("type"), std::string("ok"));
+    const Json afterAll = integration::payloadOf(fixture.call(session, "notifications.list", unreadReq));
+    CHECK_EQ(afterAll.getInt("unread"), 0);
+    CHECK_EQ(afterAll.get("notifications").items().size(), std::size_t(0));
+
+    // Изоляция: у другого пользователя только его собственные уведомления.
+    auto other = fixture.makeSession("notify-other");
+    fixture.registerUser(other, "oleg@example.com", "Олег");
+    const Json otherList = integration::payloadOf(fixture.call(other, "notifications.list"));
+    CHECK_EQ(otherList.get("notifications").items().size(), std::size_t(1));
+    CHECK_EQ(otherList.get("notifications").at(0).getString("kind"), std::string("login.new"));
+}
+
+TEST(server_push_devices) {
+    Fixture fixture;
+    auto session = fixture.makeSession("push");
+    fixture.registerUser(session, "push@example.com", "Пуш");
+
+    // Валидная регистрация APNs-токена (64 hex-символа).
+    Json reg = Json::object();
+    reg.set("platform", Json("apns"));
+    reg.set("token", Json(std::string(64, 'a')));
+    const Json registered = integration::payloadOf(fixture.call(session, "devices.push.register", reg));
+    CHECK(registered.getInt("id") > 0);
+    const long long deviceId = registered.getInt("id");
+
+    // Повторная регистрация того же токена — upsert, тот же id.
+    const Json again = integration::payloadOf(fixture.call(session, "devices.push.register", reg));
+    CHECK_EQ(again.getInt("id"), deviceId);
+
+    // Список: устройство есть, токен наружу не отдаётся.
+    const Json devices = integration::payloadOf(fixture.call(session, "devices.push.list"));
+    CHECK_EQ(devices.get("devices").items().size(), std::size_t(1));
+    CHECK(devices.get("devices").at(0).contains("token") == false);
+    CHECK_EQ(devices.get("devices").at(0).getString("platform"), std::string("apns"));
+
+    // Невалидные входные данные — bad_request.
+    Json badPlatform = Json::object();
+    badPlatform.set("platform", Json("sms"));
+    badPlatform.set("token", Json(std::string(64, 'b')));
+    CHECK_EQ(fixture.call(session, "devices.push.register", badPlatform).getString("code"),
+             std::string("bad_request"));
+    Json badToken = Json::object();
+    badToken.set("platform", Json("apns"));
+    badToken.set("token", Json(""));
+    CHECK_EQ(fixture.call(session, "devices.push.register", badToken).getString("code"),
+             std::string("bad_request"));
+
+    // Отзыв: чужое устройство — not_found, своё — revoked, повтор — not_found.
+    auto other = fixture.makeSession("push-other");
+    fixture.registerUser(other, "intruder@example.com", "Чужой");
+    Json rev = Json::object();
+    rev.set("id", Json(deviceId));
+    CHECK_EQ(fixture.call(other, "devices.push.revoke", rev).getString("type"), std::string("error"));
+    CHECK_EQ(fixture.call(other, "devices.push.revoke", rev).getString("code"), std::string("not_found"));
+    const Json revoked = integration::payloadOf(fixture.call(session, "devices.push.revoke", rev));
+    CHECK(revoked.getBool("revoked"));
+    CHECK_EQ(fixture.call(session, "devices.push.revoke", rev).getString("code"), std::string("not_found"));
+    CHECK_EQ(integration::payloadOf(fixture.call(session, "devices.push.list"))
+                 .get("devices")
+                 .items()
+                 .size(),
+             std::size_t(0));
+}
 
 int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);  // сессии в тестах пишут в socketpair

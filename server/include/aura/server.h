@@ -24,7 +24,8 @@
 
 namespace aura {
 
-class IntegrationManager;  // server/src/integrationmanager.h (этап 9)
+class IntegrationManager;   // server/src/integrationmanager.h (этап 9)
+class NotificationsManager;  // server/src/notificationsmanager.h (этап 13)
 
 class Server {
 public:
@@ -55,6 +56,7 @@ public:
     AgentManager& agent() { return *agent_; }
     TaskManager& taskManager() { return *taskManager_; }
     IntegrationManager& integrations() { return *integrations_; }
+    NotificationsManager& notifications() { return *notifications_; }
     ConnectionManager& connections() { return connections_; }
 
     // Один проход планировщика напоминаний (публично для тестов).
@@ -81,6 +83,7 @@ private:
     std::unique_ptr<AgentManager> agent_;
     std::unique_ptr<TaskManager> taskManager_;
     std::unique_ptr<IntegrationManager> integrations_;
+    std::unique_ptr<NotificationsManager> notifications_;
     std::unique_ptr<Listener> listener_;
     ConnectionManager connections_;
 

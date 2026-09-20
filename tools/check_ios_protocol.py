@@ -24,15 +24,38 @@ ROOT = Path(__file__).resolve().parent.parent
 TYPE_RE = re.compile(r'"([a-z][a-z0-9]*\.[a-z0-9]+)"')
 
 # Легитимные строки с одной точкой, не являющиеся типами запросов.
-ALLOWED: set[str] = set()
+# SF Symbols (иконки) в Swift-коде клиента.
+ALLOWED: set[str] = {
+    "exclamationmark.shield",
+    "lock.shield",
+    "person.2",
+    "arrow.right.square",
+}
 
 # Серверные события: их клиент не отправляет, только принимает.
-EVENTS = {"chat.message", "task.due"}
+EVENTS = {"chat.message", "task.due", "notification.new"}
+
+# Виды уведомлений (этап 13): значения NotificationRecord.kind, часть
+# протокола, но не типы запросов. Проверяются по create() в server.cpp.
+KINDS = {
+    "task.due",
+    "confirmation.requested",
+    "a2a.proposal",
+    "login.new",
+    "twofactor.enabled",
+    "twofactor.disabled",
+}
 
 
 def server_types() -> set[str]:
     text = (ROOT / "server/src/server.cpp").read_text(encoding="utf-8")
     return set(re.findall(r'registerHandler\("([^"]+)"', text))
+
+
+def server_kinds() -> set[str]:
+    """Виды уведомлений, которые сервер реально создаёт (create(userId, "kind", ...))."""
+    text = (ROOT / "server/src/server.cpp").read_text(encoding="utf-8")
+    return set(re.findall(r'create\(\s*[^,]+,\s*"([a-z][a-z0-9.]+)"', text))
 
 
 SYSTEM_IMAGE_RE = re.compile(r'systemImage(?:Name)?:\s*"[^"]*"')
@@ -60,9 +83,15 @@ def main() -> int:
         print("не удалось прочитать registerHandler из server/src/server.cpp")
         return 1
 
+    kinds = server_kinds()
     unknown: list[str] = []
     for candidate, files in sorted(swift_candidates().items()):
         if candidate in ALLOWED or candidate in EVENTS:
+            continue
+        if candidate in KINDS:
+            # Вид уведомления должен реально создаваться сервером.
+            if candidate not in kinds:
+                unknown.append(f"  {candidate}  (kind: сервер его не создаёт)")
             continue
         if candidate in registered:
             continue

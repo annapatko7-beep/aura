@@ -46,6 +46,7 @@ set(AURA_SOURCES
     src/mailprovider.cpp
     src/memorymanager.cpp
     src/net.cpp
+    src/notificationsmanager.cpp
     src/protocol.cpp
     src/server.cpp
     src/session.cpp

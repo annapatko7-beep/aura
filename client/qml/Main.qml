@@ -161,6 +161,7 @@ ApplicationWindow {
                         stack.push(stackChatPage, { chatId: chatId })
                     }
                     onOpenSettings: stack.push(stackSettingsPage)
+                    onOpenNotifications: stack.push(stackNotificationsPage)
                 }
             }
 
@@ -177,6 +178,60 @@ ApplicationWindow {
                 id: stackSettingsPage
                 SettingsPage {
                     onBack: stack.pop()
+                }
+            }
+
+            // Этап 13: «входящая» уведомлений в компактной раскладке.
+            Component {
+                id: stackNotificationsPage
+                Item {
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: AuraTheme.spaceLg
+                        spacing: AuraTheme.spaceMd
+
+                        GlassPanel {
+                            Layout.fillWidth: true
+                            padding: AuraTheme.spaceMd
+                            backdrop: window.contentItem
+
+                            RowLayout {
+                                anchors.fill: parent
+                                spacing: AuraTheme.spaceSm
+
+                                GlassButton {
+                                    variant: "quiet"
+                                    text: ""
+                                    glyph: "←"
+                                    implicitWidth: 48
+                                    implicitHeight: 40
+                                    onClicked: stack.pop()
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Уведомления"
+                                    font.family: AuraTheme.fontFamily
+                                    font.pixelSize: AuraTheme.fontTitle
+                                    font.weight: Font.DemiBold
+                                    color: AuraTheme.textPrimary
+                                }
+                            }
+                        }
+
+                        Flickable {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            contentHeight: notifyHolder.height
+                            clip: true
+                            boundsBehavior: Flickable.StopAtBounds
+
+                            NotificationsPanel {
+                                id: notifyHolder
+                                width: parent.width
+                                backdrop: window.contentItem
+                            }
+                        }
+                    }
                 }
             }
         }

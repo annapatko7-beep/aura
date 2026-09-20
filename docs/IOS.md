@@ -41,6 +41,7 @@ ios/
 | Барьер подтверждения | ConfirmationsView (badge) | `confirmation.list/approve/deny` |
 | Разрешения инструментов | PermissionsView | `permissions.list/set` |
 | Интеграции Google | IntegrationsView | `integrations.list/begin/callback/revoke/sync`; consent в Safari → возврат `aura://oauth?provider&code&state` |
+| Уведомления (этап 13) | NotificationsView (вкладка, badge) | `notifications.list/read`, `devices.push.register/list/revoke`, событие `notification.new`; APNs-токен из AppDelegate |
 | Голос | VoiceOverlay, Siri | on-device SFSpeechRecognizer; fallback `speech.transcribe` (WAV 16k mono, base64); озвучка AVSpeechSynthesizer |
 
 Ошибки сервера (`code`/`message`) показываются алертом; транспортные ошибки —
@@ -73,8 +74,13 @@ OAuth — клиент сам передаёт code/state в `integrations.callb
 - Access/refresh-токены, адрес сервера и device_id — только в Keychain
   (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`), не в UserDefaults.
 - Токены интеграций на устройство не попадают вовсе (см. SECURITY.md §9).
-- Разрешения микрофона/речи/напоминаний запрашиваются в момент действия;
-  фоновых режимов и push на этом этапе нет (push — этап 13, APNs).
+- Разрешения микрофона/речи/напоминаний запрашиваются в момент действия.
+- Push (этап 13): APNs-токен получается через `registerForRemoteNotifications`
+  (разрешение `UNUserNotificationCenter` запрашивается при запуске) и
+  регистрируется на сервере (`devices.push.register`, hex без разделителей);
+  entitlement `aps-environment` + фоновый режим `remote-notification` — в
+  project.yml. Токен серверу отдаётся, но обратно клиенту не возвращается
+  никогда (`devices.push.list` без поля `token`).
 
 ## Сборка и тесты
 
@@ -87,7 +93,7 @@ cd ios/AuraKit && swift test        # тесты общего слоя без с
 
 ```bash
 python3 tools/check_ios_protocol.py
-# хендлеров сервера: 59; типов в iOS-клиенте: 33 — все известны серверу
+# хендлеров сервера: 64; типов в iOS-клиенте: 44 — все известны серверу
 ```
 
 ## Ограничения этапа
@@ -95,5 +101,9 @@ python3 tools/check_ios_protocol.py
 - Компиляция Swift и симулятор недоступны в песочнице разработки: код
   проверен сверкой протокола, валидацией project.yml (YAML), балансом
   синтаксиса и ревью; `swift test`/Xcode-сборку нужно прогнать на Mac.
-- Universal Links, APNs-push, Live Activities, виджет и Share Extension —
-  этап 13. EventKit-календарь (события, не напоминания) — по потребности.
+- Push-доставка требует внешнего шлюза APNs (сервер отдаёт готовый конверт
+  на `AURA_PUSH_WEBHOOK_URL`; подписывает JWT и форвардит в Apple шлюз) —
+  в песочнице проверен путь до шлюза (webhook-драйвер, e2e), реальная
+  доставка на устройство — на Mac с сертификатом/ключом `.p8`.
+- Universal Links, Live Activities, виджет и Share Extension — позже.
+  EventKit-календарь (события, не напоминания) — по потребности.

@@ -48,6 +48,15 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        # Этап 13: тихое пробуждение при push-доставке (APNs).
+        UIBackgroundModes:
+          - remote-notification
+    entitlements:
+      path: Aura/Aura.entitlements
+      properties:
+        # Push Notifications: development для отладки; при архивации
+        # Xcode подставит production автоматически (aps-environment).
+        aps-environment: development
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.aura.app
