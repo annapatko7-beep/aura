@@ -231,9 +231,19 @@ async def main() -> int:
           payload.get("intent"))
     check(bool(payload.get("actions")), "AI-сервис вернул действия", payload.get("actions"))
     results = payload.get("results", [])
-    failed = [r for r in results if not r.get("ok")]
-    check(bool(results) and not failed,
-          "C++ ToolManager выполнил все действия", failed or results)
+    # Этап 8: безопасные действия исполняются сразу, опасные (send_message)
+    # уходят в барьер подтверждения (requires_confirmation), а не исполняются.
+    executed = [r for r in results if r.get("ok")]
+    pending_confirm = [r for r in results if r.get("requires_confirmation")]
+    hard_failed = [r for r in results
+                   if not r.get("ok") and not r.get("requires_confirmation") and not r.get("denied")]
+    check(bool(results) and not hard_failed,
+          "действия исполнены или ждут подтверждения (без ошибок)", hard_failed or results)
+    check(bool(executed), "безопасные действия исполнены сразу", executed)
+    check(bool(pending_confirm),
+          "опасное действие (send_message) требует подтверждения", pending_confirm)
+    confirmation_id = pending_confirm[0].get("confirmation_id") if pending_confirm else None
+    check(confirmation_id is not None, "выдан confirmation_id", pending_confirm)
 
     a2a = payload.get("a2a") or {}
     check(bool(a2a), "проведены переговоры Agent-to-Agent", payload.keys())
@@ -249,6 +259,70 @@ async def main() -> int:
     agent_messages = anya.events_of("chat.message")
     check(len(agent_messages) >= 2, "результат Ауры опубликован в чате",
           len(agent_messages))
+
+    # ------------------------------------- разрешения и барьер подтверждения
+    print("\n3c. Разрешения и барьер подтверждения (этап 8)")
+
+    # permissions.list: каталог с флагами опасности и эффективными режимами.
+    perms = await anna.call("permissions.list")
+    perm_items = perms.get("payload", {}).get("tools", [])
+    check(perms.get("type") == "ok" and len(perm_items) >= 8,
+          "permissions.list вернул каталог инструментов", perms.get("payload"))
+    email_perm = next((p for p in perm_items if p.get("tool") == "send_email"), {})
+    check(email_perm.get("dangerous") is True and email_perm.get("default_mode") == "ask",
+          "send_email помечен опасным (default ask)", email_perm)
+    cafe_perm = next((p for p in perm_items if p.get("tool") == "find_cafe"), {})
+    check(cafe_perm.get("dangerous") is False and cafe_perm.get("default_mode") == "allow",
+          "find_cafe безопасен (default allow)", cafe_perm)
+
+    # confirmation.list: действие из agent.ask уже ожидает подтверждения.
+    confirms = await anna.call("confirmation.list", {"status": "pending"})
+    pending_items = confirms.get("payload", {}).get("actions", [])
+    check(confirms.get("type") == "ok" and len(pending_items) >= 1,
+          "confirmation.list показал отложенное действие", confirms.get("payload"))
+
+    # Подтверждаем реальное действие, созданное агентом, — сервер исполняет его.
+    if confirmation_id is not None:
+        approved = await anna.call("confirmation.approve", {"id": confirmation_id})
+        check(approved.get("type") == "ok"
+              and approved.get("payload", {}).get("status") == "executed",
+              "confirmation.approve исполнил действие", approved.get("payload"))
+        # Повторное подтверждение уже обработанного — ошибка.
+        again = await anna.call("confirmation.approve", {"id": confirmation_id})
+        check(again.get("code") == "bad_request",
+              "повторное подтверждение отклонено", again)
+
+    # permissions.set: переводим send_email в deny и проверяем валидацию.
+    set_perm = await anna.call("permissions.set", {"tool": "send_email", "mode": "deny"})
+    check(set_perm.get("type") == "ok" and set_perm.get("payload", {}).get("mode") == "deny",
+          "permissions.set применил режим deny", set_perm.get("payload"))
+    bad_mode = await anna.call("permissions.set", {"tool": "send_email", "mode": "maybe"})
+    check(bad_mode.get("code") == "bad_request", "недопустимый режим отклонён", bad_mode)
+    bad_tool = await anna.call("permissions.set", {"tool": "launch_missiles", "mode": "allow"})
+    check(bad_tool.get("code") == "bad_request", "неизвестный инструмент отклонён", bad_tool)
+
+    # Режим deny: send_email уже переведён в deny — намерение «письмо»
+    # отклоняется сразу, без исполнения и без отложенного действия.
+    deny_ask = await anna.call("agent.ask", {
+        "message": "Отправь письмо team@aura.io с темой встреча",
+    }, timeout=40)
+    deny_results = deny_ask.get("payload", {}).get("results", [])
+    check(any(r.get("denied") for r in deny_results),
+          "send_email в режиме deny отклонён без исполнения", deny_results)
+
+    # Режим ask: возвращаем send_email в ask — намерение уходит в подтверждение,
+    # затем отклоняем его через confirmation.deny.
+    await anna.call("permissions.set", {"tool": "send_email", "mode": "ask"})
+    ask_again = await anna.call("agent.ask", {
+        "message": "Отправь письмо team@aura.io с темой встреча",
+    }, timeout=40)
+    ask_results = ask_again.get("payload", {}).get("results", [])
+    email_pending = [r for r in ask_results if r.get("requires_confirmation")]
+    check(bool(email_pending), "намерение «письмо» требует подтверждения", ask_results)
+    if email_pending:
+        denied = await anna.call("confirmation.deny", {"id": email_pending[0].get("confirmation_id")})
+        check(denied.get("payload", {}).get("status") == "denied",
+              "confirmation.deny отклонил действие", denied.get("payload"))
 
     # ------------------------------------------------------------ речь (STT)
     print("\n3b. Распознавание речи (C++-сервер → Python AI Service)")

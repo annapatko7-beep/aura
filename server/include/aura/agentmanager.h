@@ -66,11 +66,25 @@ public:
     // Контекст, который сервер отправляет в AI-сервис (вынесено для тестов).
     Json buildContext(long long userId, const std::string& message, const Json& history);
 
+    // Разрешения и барьер подтверждения (этап 8, ядро безопасности).
+    // Правило v3: LLM лишь формирует намерение, сервер исполняет его только
+    // после проверки tool_permissions, а опасные операции — после подтверждения.
+    Json listPermissions(long long userId);
+    Result setPermission(long long userId, const std::string& tool, const std::string& mode);
+    Json listConfirmations(long long userId, const std::string& status, int limit);
+    Result resolveConfirmation(long long userId, long long actionId, bool approve);
+
     bool available(std::string& error) const;
 
 private:
     // Выполняет действия, предложенные моделью, через ToolManager.
-    Json executeActions(long long userId, const Json& actions, bool execute);
+    Json executeActions(long long userId, long long chatId, const Json& actions, bool execute);
+
+    // Эффективный режим инструмента: явное разрешение пользователя или режим
+    // по умолчанию (опасные → ask, безопасные → allow).
+    std::string effectiveMode(long long userId, const std::string& tool);
+    // Человекочитаемое описание действия для панели подтверждения.
+    static std::string summarizeAction(const std::string& tool, const Json& args);
 
     // Ищет пользователя-собеседника по email или имени.
     std::optional<UserRecord> resolvePeer(long long userId, const std::string& target);

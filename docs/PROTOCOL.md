@@ -178,9 +178,45 @@ AVSpeechSynthesizer), отдельного сетевого метода не т
 | `tool.run` | `tool`, `args{}` | результат инструмента |
 
 Инструменты: `send_message`, `create_note`, `create_reminder`, `send_email`,
-`find_cafe`, `book_table`, `check_calendar`. В режиме `AURA_TOOLS_MODE=sandbox`
-внешние API заменяются детерминированными ответами (тот же контракт, что в
-`ai/aura_ai/tools.py`).
+`find_cafe`, `book_table`, `check_calendar`, `suggest_time`. В режиме
+`AURA_TOOLS_MODE=sandbox` внешние API заменяются детерминированными ответами
+(тот же контракт, что в `ai/aura_ai/tools.py`). `tool.list` возвращает для
+каждого инструмента флаг `dangerous` и `default_mode`.
+
+### Разрешения и подтверждения (этап 8)
+
+Ядро безопасности v3: **LLM лишь формирует намерение, исполняет сервер и только
+после проверки прав.** Каждое действие Ауры проходит барьер:
+
+1. сервер вычисляет эффективный режим инструмента — явное разрешение
+   пользователя из `tool_permissions` или режим по умолчанию
+   (опасные `send_message`/`send_email`/`book_table` → `ask`, остальные → `allow`);
+2. `allow` — исполнить сразу; `deny` — отклонить; `ask` — **не исполнять**, а
+   создать отложенное действие (`pending_actions`) и вернуть в `results[]`
+   элемент с `requires_confirmation: true` и `confirmation_id`;
+3. пользователь подтверждает (`confirmation.approve`) или отклоняет
+   (`confirmation.deny`); только после подтверждения сервер исполняет инструмент.
+
+Элемент `results[]` для действия, требующего подтверждения:
+`{ "tool": "send_email", "mode": "ask", "requires_confirmation": true,
+"confirmation_id": 12, "summary": "Отправить письмо на x@y.z", "ok": false }`.
+Отклонённое по `deny`: `{ "tool": "...", "mode": "deny", "denied": true, "ok": false }`.
+
+| тип | payload | ответ |
+| --- | --- | --- |
+| `permissions.list` | — | `tools[]`: `tool`, `description`, `dangerous`, `default_mode`, `mode` (эффективный) |
+| `permissions.set` | `tool`, `mode` (`allow`/`ask`/`deny`) | `tool`, `mode`; неизвестный инструмент или режим → `bad_request` |
+| `confirmation.list` | `status?` (по умолч. `pending`), `limit?` | `actions[]`: `id`, `tool`, `args{}`, `summary`, `status`, `result{}`, `created_at` |
+| `confirmation.approve` | `id` | `id`, `status` (`executed`/`failed`), `result{}`; чужое/несуществующее → `not_found`, уже обработанное → `bad_request` |
+| `confirmation.deny` | `id` | `id`, `status` (`denied`) |
+
+Разрешения хранятся в `tool_permissions(user_id, tool, mode)`; отложенные
+действия — в `pending_actions(id, user_id, chat_id, tool, args, summary, status,
+result, …)` со статусами `pending`/`approved`/`denied`/`executed`/`failed`/
+`expired`. Успешное подтверждённое действие с `chat_id` публикуется в чат
+сообщением `kind: agent_action` (`origin: aura-agent`, `confirmed: true`).
+Изменения разрешений и подтверждения пишутся в `audit_logs`
+(`tool_permission`, `action_approved`, `action_denied`).
 
 ## HTTP API Python AI Service
 

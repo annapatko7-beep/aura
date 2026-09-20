@@ -28,6 +28,13 @@ public:
     Json list() const;
     Result run(long long userId, const std::string& tool, const Json& args);
 
+    // Классификация опасности (этап 8, ядро безопасности). Опасные инструменты
+    // имеют внешние побочные эффекты и по умолчанию требуют подтверждения.
+    //   allow — исполнять сразу; ask — ждать подтверждения; deny — не исполнять.
+    static bool isDangerous(const std::string& tool);
+    static std::string defaultMode(const std::string& tool);  // "ask" | "allow"
+    static bool isKnownTool(const std::string& tool);
+
     // Отдельные инструменты (открыты для тестов).
     Result sendMessage(long long userId, const Json& args);
     Result createNote(long long userId, const Json& args);

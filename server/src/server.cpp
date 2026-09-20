@@ -579,6 +579,38 @@ void Server::registerHandlers() {
         if (!result.ok) return protocol::error(request.id, protocol::code::kBadRequest, result.error);
         return protocol::ok(request.id, result.data);
     });
+
+    // -------------------------------------- разрешения и подтверждения (этап 8)
+    registerHandler("permissions.list", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        return protocol::ok(request.id, agent_->listPermissions(session->userId()));
+    });
+
+    registerHandler("permissions.set", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        const auto result = agent_->setPermission(session->userId(),
+                                                  request.payload.getString("tool"),
+                                                  request.payload.getString("mode"));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("confirmation.list", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        return protocol::ok(request.id,
+                            agent_->listConfirmations(session->userId(),
+                                                      request.payload.getString("status", "pending"),
+                                                      boundedLimit(request.payload, "limit", 20, 100)));
+    });
+
+    registerHandler("confirmation.approve", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        const auto result = agent_->resolveConfirmation(session->userId(), request.payload.getInt("id"), true);
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("confirmation.deny", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        const auto result = agent_->resolveConfirmation(session->userId(), request.payload.getInt("id"), false);
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
 }
 
 }  // namespace aura

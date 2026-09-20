@@ -60,7 +60,31 @@ std::optional<UserRecord> AgentManager::resolvePeer(long long userId, const std:
     return std::nullopt;
 }
 
-Json AgentManager::executeActions(long long userId, const Json& actions, bool execute) {
+std::string AgentManager::effectiveMode(long long userId, const std::string& tool) {
+    const std::string explicitMode = database_.db().getToolPermission(userId, tool);
+    if (!explicitMode.empty()) return explicitMode;
+    return ToolManager::defaultMode(tool);
+}
+
+std::string AgentManager::summarizeAction(const std::string& tool, const Json& args) {
+    if (tool == "send_message") {
+        const std::string to = args.getString("to");
+        return "Отправить сообщение " + (to.empty() ? std::string("контакту") : to);
+    }
+    if (tool == "send_email") return "Отправить письмо на " + args.getString("to", "?");
+    if (tool == "book_table") {
+        return "Забронировать столик: " + args.getString("place", "?") +
+               " на " + std::to_string(args.getInt("people", 2)) + " чел.";
+    }
+    if (tool == "create_note") return "Создать заметку";
+    if (tool == "create_reminder") return "Создать напоминание: " + args.getString("text", "");
+    if (tool == "find_cafe") return "Подобрать место";
+    if (tool == "check_calendar") return "Проверить календарь";
+    if (tool == "suggest_time") return "Предложить время";
+    return "Выполнить " + tool;
+}
+
+Json AgentManager::executeActions(long long userId, long long chatId, const Json& actions, bool execute) {
     Json results = Json::array();
     if (!actions.isArray()) return results;
 
@@ -70,12 +94,41 @@ Json AgentManager::executeActions(long long userId, const Json& actions, bool ex
         Json item = Json::object();
         item.set("id", Json(action.getString("id")));
         item.set("tool", Json(tool));
+
         if (!execute) {
             item.set("ok", Json(false));
             item.set("skipped", Json(true));
             results.push(item);
             continue;
         }
+
+        // Барьер безопасности (этап 8): сервер, а не LLM, решает, исполнять ли.
+        const std::string mode = effectiveMode(userId, tool);
+        item.set("mode", Json(mode));
+        if (mode == "deny") {
+            item.set("ok", Json(false));
+            item.set("denied", Json(true));
+            item.set("error", Json("действие запрещено вашими настройками разрешений"));
+            results.push(item);
+            continue;
+        }
+        if (mode == "ask") {
+            PendingActionRecord pending;
+            pending.userId = userId;
+            pending.chatId = chatId;
+            pending.tool = tool;
+            pending.args = args;
+            pending.summary = summarizeAction(tool, args);
+            const long long pendingId = database_.db().createPendingAction(pending);
+            item.set("ok", Json(false));
+            item.set("requires_confirmation", Json(true));
+            item.set("confirmation_id", Json(pendingId));
+            item.set("summary", Json(pending.summary));
+            results.push(item);
+            continue;
+        }
+
+        // mode == "allow": исполняем сразу.
         const ToolManager::Result outcome = tools_.run(userId, tool, args);
         item.set("ok", Json(outcome.ok));
         if (outcome.ok) {
@@ -140,9 +193,9 @@ AgentManager::Result AgentManager::ask(long long userId,
         return Result::failure(protocol::code::kUpstream, "AI-сервис вернул не-JSON: " + error);
     }
 
-    // 1. Выполняем действия
+    // 1. Выполняем действия (с барьером подтверждений для опасных операций)
     const Json actions = answer.get("actions");
-    const Json results = executeActions(userId, actions, execute);
+    const Json results = executeActions(userId, chatId, actions, execute);
 
     // 2. Обновляем долговременную память
     std::size_t savedMemory = 0;
@@ -251,6 +304,114 @@ AgentManager::Result AgentManager::transcribe(const std::string& audioBase64,
 
     result.ok = true;
     result.payload = answer;  // {text, language, provider}
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+//  Разрешения и барьер подтверждения (этап 8)
+// ---------------------------------------------------------------------------
+
+Json AgentManager::listPermissions(long long userId) {
+    const Json catalog = tools_.list();
+    const Json catalogTools = catalog.get("tools");
+    Json out = Json::array();
+    for (const auto& tool : catalogTools.items()) {
+        const std::string name = tool.getString("name");
+        Json item = Json::object();
+        item.set("tool", Json(name));
+        item.set("description", tool.get("description"));
+        item.set("dangerous", tool.get("dangerous"));
+        item.set("default_mode", tool.get("default_mode"));
+        item.set("mode", Json(effectiveMode(userId, name)));
+        out.push(item);
+    }
+    Json result = Json::object();
+    result.set("tools", out);
+    return result;
+}
+
+AgentManager::Result AgentManager::setPermission(long long userId,
+                                                 const std::string& tool,
+                                                 const std::string& mode) {
+    if (!ToolManager::isKnownTool(tool)) {
+        return Result::failure(protocol::code::kBadRequest, "неизвестный инструмент: " + tool);
+    }
+    if (mode != "allow" && mode != "ask" && mode != "deny") {
+        return Result::failure(protocol::code::kBadRequest, "режим должен быть allow, ask или deny");
+    }
+    const DatabaseError saved = database_.db().setToolPermission(userId, tool, mode);
+    if (!saved.ok) return Result::failure(protocol::code::kInternal, saved.message);
+
+    Json detail = Json::object();
+    detail.set("tool", Json(tool));
+    detail.set("mode", Json(mode));
+    database_.db().insertAudit(userId, "tool_permission", detail, "");
+
+    Result result;
+    result.ok = true;
+    result.payload.set("tool", Json(tool));
+    result.payload.set("mode", Json(mode));
+    return result;
+}
+
+Json AgentManager::listConfirmations(long long userId, const std::string& status, int limit) {
+    Json out = Json::array();
+    for (const auto& record : database_.db().listPendingActions(userId, status, limit)) {
+        out.push(record.toJson());
+    }
+    Json result = Json::object();
+    result.set("actions", out);
+    return result;
+}
+
+AgentManager::Result AgentManager::resolveConfirmation(long long userId, long long actionId, bool approve) {
+    const auto pending = database_.db().findPendingAction(actionId);
+    if (!pending || pending->userId != userId) {
+        return Result::failure(protocol::code::kNotFound, "отложенное действие не найдено");
+    }
+    if (pending->status != "pending") {
+        return Result::failure(protocol::code::kBadRequest, "действие уже обработано (" + pending->status + ")");
+    }
+
+    Json detail = Json::object();
+    detail.set("action_id", Json(actionId));
+    detail.set("tool", Json(pending->tool));
+
+    Result result;
+    result.ok = true;
+    result.payload.set("id", Json(actionId));
+
+    if (!approve) {
+        database_.db().resolvePendingAction(actionId, "denied", Json::object());
+        database_.db().insertAudit(userId, "action_denied", detail, "");
+        result.payload.set("status", Json("denied"));
+        return result;
+    }
+
+    // Пользователь подтвердил — теперь исполняем инструмент.
+    const ToolManager::Result outcome = tools_.run(userId, pending->tool, pending->args);
+    Json outcomeJson = Json::object();
+    outcomeJson.set("ok", Json(outcome.ok));
+    if (outcome.ok) {
+        outcomeJson.set("data", outcome.data);
+    } else {
+        outcomeJson.set("error", Json(outcome.error));
+    }
+    const std::string status = outcome.ok ? "executed" : "failed";
+    database_.db().resolvePendingAction(actionId, status, outcomeJson);
+    detail.set("status", Json(status));
+    database_.db().insertAudit(userId, "action_approved", detail, "");
+
+    if (outcome.ok && pending->chatId > 0) {
+        Json payload = Json::object();
+        payload.set("origin", Json("aura-agent"));
+        payload.set("confirmed", Json(true));
+        payload.set("tool", Json(pending->tool));
+        chats_.send(userId, pending->chatId, "Аура выполнила: " + pending->summary, "agent_action", payload);
+    }
+
+    result.payload.set("status", Json(status));
+    result.payload.set("result", outcomeJson);
     return result;
 }
 

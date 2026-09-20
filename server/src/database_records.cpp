@@ -97,4 +97,28 @@ Json MemoryRecord::toJson() const {
     return json;
 }
 
+Json ToolPermissionRecord::toJson() const {
+    Json json = Json::object();
+    json.set("user_id", Json(userId));
+    json.set("tool", Json(tool));
+    json.set("mode", Json(mode));
+    json.set("updated_at", Json(updatedAt));
+    return json;
+}
+
+Json PendingActionRecord::toJson() const {
+    Json json = Json::object();
+    json.set("id", Json(id));
+    json.set("user_id", Json(userId));
+    json.set("chat_id", Json(chatId));
+    json.set("tool", Json(tool));
+    json.set("args", args.isObject() ? args : Json::object());
+    json.set("summary", Json(summary));
+    json.set("status", Json(status));
+    json.set("result", result.isObject() ? result : Json::object());
+    json.set("created_at", Json(createdAt));
+    if (!resolvedAt.empty()) json.set("resolved_at", Json(resolvedAt));
+    return json;
+}
+
 }  // namespace aura

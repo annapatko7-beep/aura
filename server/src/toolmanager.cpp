@@ -73,6 +73,23 @@ double scoreCafe(const Cafe& cafe, const std::vector<std::string>& diet, double 
 ToolManager::ToolManager(const Config& config, DatabaseManager& database, ChatManager& chats)
     : config_(config), database_(database), chats_(chats) {}
 
+bool ToolManager::isKnownTool(const std::string& tool) {
+    static const std::vector<std::string> kTools = {
+        "send_message", "create_note", "create_reminder", "send_email",
+        "find_cafe",    "book_table",  "check_calendar",  "suggest_time",
+    };
+    return std::find(kTools.begin(), kTools.end(), tool) != kTools.end();
+}
+
+bool ToolManager::isDangerous(const std::string& tool) {
+    // Внешние побочные эффекты: отправка кому-либо, письмо, бронирование.
+    return tool == "send_message" || tool == "send_email" || tool == "book_table";
+}
+
+std::string ToolManager::defaultMode(const std::string& tool) {
+    return isDangerous(tool) ? "ask" : "allow";
+}
+
 Json ToolManager::list() const {
     Json tools = Json::array();
     const std::vector<std::pair<const char*, const char*>> catalog = {
@@ -89,6 +106,8 @@ Json ToolManager::list() const {
         Json tool = Json::object();
         tool.set("name", Json(item.first));
         tool.set("description", Json(item.second));
+        tool.set("dangerous", Json(isDangerous(item.first)));
+        tool.set("default_mode", Json(defaultMode(item.first)));
         tools.push(tool);
     }
     Json result = Json::object();

@@ -866,7 +866,139 @@ public:
         return DatabaseError::failure("настройки не найдены");
     }
 
+    // ------------------------------------------------- tool_permissions
+    std::string getToolPermission(long long userId, const std::string& tool) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& entry : table("tool_permissions").items()) {
+            if (entry.getInt("user_id") == userId && entry.getString("tool") == tool) {
+                return entry.getString("mode");
+            }
+        }
+        return "";  // не задано
+    }
+
+    std::vector<ToolPermissionRecord> listToolPermissions(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<ToolPermissionRecord> result;
+        for (const auto& entry : table("tool_permissions").items()) {
+            if (entry.getInt("user_id") != userId) continue;
+            result.push_back(toToolPermission(entry));
+        }
+        std::sort(result.begin(), result.end(),
+                  [](const ToolPermissionRecord& a, const ToolPermissionRecord& b) { return a.tool < b.tool; });
+        return result;
+    }
+
+    DatabaseError setToolPermission(long long userId,
+                                    const std::string& tool,
+                                    const std::string& mode) override {
+        if (mode != "allow" && mode != "ask" && mode != "deny") {
+            return DatabaseError::failure("недопустимый режим разрешения");
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("tool_permissions")) {
+            if (entry.getInt("user_id") == userId && entry.getString("tool") == tool) {
+                entry.set("mode", Json(mode));
+                entry.set("updated_at", Json(isoNow()));
+                flush();
+                return DatabaseError::success();
+            }
+        }
+        Json entry = Json::object();
+        entry.set("user_id", Json(userId));
+        entry.set("tool", Json(tool));
+        entry.set("mode", Json(mode));
+        entry.set("updated_at", Json(isoNow()));
+        table("tool_permissions").push(entry);
+        flush();
+        return DatabaseError::success();
+    }
+
+    // ---------------------------------------------------- pending_actions
+    long long createPendingAction(const PendingActionRecord& record) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const long long id = nextId("pending_actions");
+        Json entry = Json::object();
+        entry.set("id", Json(id));
+        entry.set("user_id", Json(record.userId));
+        entry.set("chat_id", Json(record.chatId));
+        entry.set("tool", Json(record.tool));
+        entry.set("args", record.args.isObject() ? record.args : Json::object());
+        entry.set("summary", Json(record.summary));
+        entry.set("status", Json(record.status.empty() ? std::string("pending") : record.status));
+        entry.set("result", Json::object());
+        entry.set("created_at", Json(isoNow()));
+        table("pending_actions").push(entry);
+        flush();
+        return id;
+    }
+
+    std::optional<PendingActionRecord> findPendingAction(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& entry : table("pending_actions").items()) {
+            if (entry.getInt("id") == id) return toPendingAction(entry);
+        }
+        return std::nullopt;
+    }
+
+    std::vector<PendingActionRecord> listPendingActions(long long userId,
+                                                        const std::string& status,
+                                                        int limit) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<PendingActionRecord> result;
+        for (const auto& entry : table("pending_actions").items()) {
+            if (entry.getInt("user_id") != userId) continue;
+            if (!status.empty() && entry.getString("status") != status) continue;
+            result.push_back(toPendingAction(entry));
+        }
+        std::sort(result.begin(), result.end(),
+                  [](const PendingActionRecord& a, const PendingActionRecord& b) { return a.id > b.id; });
+        if (limit > 0 && static_cast<int>(result.size()) > limit) {
+            result.resize(static_cast<std::size_t>(limit));
+        }
+        return result;
+    }
+
+    DatabaseError resolvePendingAction(long long id,
+                                       const std::string& status,
+                                       const Json& result) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("pending_actions")) {
+            if (entry.getInt("id") != id) continue;
+            entry.set("status", Json(status));
+            entry.set("result", result.isObject() ? result : Json::object());
+            entry.set("resolved_at", Json(isoNow()));
+            flush();
+            return DatabaseError::success();
+        }
+        return DatabaseError::failure("отложенное действие не найдено");
+    }
+
 private:
+    ToolPermissionRecord toToolPermission(const Json& entry) const {
+        ToolPermissionRecord record;
+        record.userId = entry.getInt("user_id");
+        record.tool = entry.getString("tool");
+        record.mode = entry.getString("mode", "ask");
+        record.updatedAt = entry.getString("updated_at");
+        return record;
+    }
+
+    PendingActionRecord toPendingAction(const Json& entry) const {
+        PendingActionRecord record;
+        record.id = entry.getInt("id");
+        record.userId = entry.getInt("user_id");
+        record.chatId = entry.getInt("chat_id");
+        record.tool = entry.getString("tool");
+        record.args = entry.get("args").isObject() ? entry.get("args") : Json::object();
+        record.summary = entry.getString("summary");
+        record.status = entry.getString("status", "pending");
+        record.result = entry.get("result").isObject() ? entry.get("result") : Json::object();
+        record.createdAt = entry.getString("created_at");
+        record.resolvedAt = entry.getString("resolved_at");
+        return record;
+    }
+
     // Версия без блокировки: вызывается из методов, которые уже держат mutex_.
     std::optional<UserRecord> findUserByIdLocked(long long id) const {
         const Json* users = state_.find("users");

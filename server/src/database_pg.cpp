@@ -1041,7 +1041,154 @@ public:
         return DatabaseError::success();
     }
 
+    // ------------------------------------------------- tool_permissions
+    std::string getToolPermission(long long userId, const std::string& tool) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        if (!execute("SELECT mode FROM tool_permissions WHERE user_id = $1 AND tool = $2",
+                     {std::to_string(userId), tool}, &result)) {
+            return "";
+        }
+        std::string mode;
+        if (PQntuples(result) > 0) mode = value_(result, 0, 0);
+        PQclear(result);
+        return mode;
+    }
+
+    std::vector<ToolPermissionRecord> listToolPermissions(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<ToolPermissionRecord> entries;
+        PGresult* result = nullptr;
+        if (!execute(
+                "SELECT tool, mode, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') "
+                "FROM tool_permissions WHERE user_id = $1 ORDER BY tool",
+                {std::to_string(userId)}, &result)) {
+            return entries;
+        }
+        for (int row = 0; row < PQntuples(result); ++row) {
+            ToolPermissionRecord record;
+            record.userId = userId;
+            record.tool = value_(result, row, 0);
+            record.mode = value_(result, row, 1);
+            record.updatedAt = value_(result, row, 2);
+            entries.push_back(record);
+        }
+        PQclear(result);
+        return entries;
+    }
+
+    DatabaseError setToolPermission(long long userId,
+                                    const std::string& tool,
+                                    const std::string& mode) override {
+        if (mode != "allow" && mode != "ask" && mode != "deny") {
+            return DatabaseError::failure("недопустимый режим разрешения");
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        if (!execute(
+                "INSERT INTO tool_permissions (user_id, tool, mode) VALUES ($1, $2, $3) "
+                "ON CONFLICT (user_id, tool) DO UPDATE SET mode = EXCLUDED.mode, updated_at = now()",
+                {std::to_string(userId), tool, mode}, &result)) {
+            return DatabaseError::failure(lastError_);
+        }
+        PQclear(result);
+        return DatabaseError::success();
+    }
+
+    // ---------------------------------------------------- pending_actions
+    long long createPendingAction(const PendingActionRecord& record) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        const std::string status = record.status.empty() ? std::string("pending") : record.status;
+        if (!execute(
+                "INSERT INTO pending_actions (user_id, chat_id, tool, args, summary, status) "
+                "VALUES ($1, NULLIF($2, '0')::bigint, $3, $4::jsonb, $5, $6) RETURNING id",
+                {std::to_string(record.userId), std::to_string(record.chatId), record.tool,
+                 record.args.isObject() ? record.args.dump() : std::string("{}"), record.summary, status},
+                &result)) {
+            PQclear(result);
+            return 0;
+        }
+        long long id = 0;
+        if (PQntuples(result) > 0) id = std::atoll(value_(result, 0, 0).c_str());
+        PQclear(result);
+        return id;
+    }
+
+    std::optional<PendingActionRecord> findPendingAction(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        if (!execute(pendingActionSelect() + " WHERE id = $1", {std::to_string(id)}, &result)) {
+            return std::nullopt;
+        }
+        std::optional<PendingActionRecord> record;
+        if (PQntuples(result) > 0) record = readPendingAction(result, 0);
+        PQclear(result);
+        return record;
+    }
+
+    std::vector<PendingActionRecord> listPendingActions(long long userId,
+                                                        const std::string& status,
+                                                        int limit) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<PendingActionRecord> entries;
+        PGresult* result = nullptr;
+        bool ok = false;
+        if (status.empty()) {
+            ok = execute(pendingActionSelect() + " WHERE user_id = $1 ORDER BY id DESC LIMIT $2",
+                         {std::to_string(userId), std::to_string(limit)}, &result);
+        } else {
+            ok = execute(pendingActionSelect() + " WHERE user_id = $1 AND status = $2 ORDER BY id DESC LIMIT $3",
+                         {std::to_string(userId), status, std::to_string(limit)}, &result);
+        }
+        if (!ok) return entries;
+        for (int row = 0; row < PQntuples(result); ++row) entries.push_back(readPendingAction(result, row));
+        PQclear(result);
+        return entries;
+    }
+
+    DatabaseError resolvePendingAction(long long id,
+                                       const std::string& status,
+                                       const Json& result) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute(
+                "UPDATE pending_actions SET status = $2, result = $3::jsonb, resolved_at = now() "
+                "WHERE id = $1",
+                {std::to_string(id), status, result.isObject() ? result.dump() : std::string("{}")}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool updated = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!updated) return DatabaseError::failure("отложенное действие не найдено");
+        return DatabaseError::success();
+    }
+
 private:
+    static std::string pendingActionSelect() {
+        return "SELECT id, user_id, COALESCE(chat_id, 0), tool, args::text, summary, status, result::text, "
+               "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), "
+               "to_char(resolved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') "
+               "FROM pending_actions";
+    }
+
+    PendingActionRecord readPendingAction(PGresult* result, int row) const {
+        PendingActionRecord record;
+        record.id = std::atoll(value_(result, row, 0).c_str());
+        record.userId = std::atoll(value_(result, row, 1).c_str());
+        record.chatId = std::atoll(value_(result, row, 2).c_str());
+        record.tool = value_(result, row, 3);
+        Json args = Json::parse(value_(result, row, 4));
+        record.args = args.isObject() ? args : Json::object();
+        record.summary = value_(result, row, 5);
+        record.status = value_(result, row, 6);
+        Json res = Json::parse(value_(result, row, 7));
+        record.result = res.isObject() ? res : Json::object();
+        record.createdAt = value_(result, row, 8);
+        record.resolvedAt = value_(result, row, 9);
+        return record;
+    }
+
     static std::string value_(PGresult* result, int row, int column) {
         if (PQgetisnull(result, row, column)) return "";
         return PQgetvalue(result, row, column);

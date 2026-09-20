@@ -21,11 +21,13 @@
 
 #include "aura/authmanager.h"
 #include "aura/crypto.h"
+#include "aura/idatabase.h"
 #include "aura/json.h"
 #include "aura/jwt.h"
 #include "aura/net.h"
 #include "aura/protocol.h"
 #include "aura/server.h"
+#include "aura/toolmanager.h"
 #include "aura/totp.h"
 #include "aura/ws.h"
 
@@ -1284,6 +1286,150 @@ TEST(server_two_factor_full_flow) {
     plainLogin.set("password", Json("aura1234"));
     CHECK_EQ(fixture.call(plainSession, "auth.login", plainLogin).getString("type"), std::string("ok"));
     CHECK(plainSession->authenticated());
+}
+
+// ------------------------------------------- этап 8: разрешения и подтверждения
+TEST(tool_danger_classification) {
+    using aura::ToolManager;
+    // Опасные: внешние побочные эффекты.
+    CHECK(ToolManager::isDangerous("send_message"));
+    CHECK(ToolManager::isDangerous("send_email"));
+    CHECK(ToolManager::isDangerous("book_table"));
+    // Безопасные: локальные/читают.
+    CHECK(!ToolManager::isDangerous("create_note"));
+    CHECK(!ToolManager::isDangerous("create_reminder"));
+    CHECK(!ToolManager::isDangerous("find_cafe"));
+    CHECK(!ToolManager::isDangerous("check_calendar"));
+    CHECK(!ToolManager::isDangerous("suggest_time"));
+    // Режим по умолчанию: опасные → ask, безопасные → allow.
+    CHECK_EQ(ToolManager::defaultMode("send_email"), std::string("ask"));
+    CHECK_EQ(ToolManager::defaultMode("find_cafe"), std::string("allow"));
+    CHECK(ToolManager::isKnownTool("book_table"));
+    CHECK(!ToolManager::isKnownTool("launch_missiles"));
+}
+
+TEST(ai_tool_permissions_and_pending_actions_db) {
+    auto db = aura::makeEmbeddedDatabase("");  // in-memory (без файла)
+    long long userId = 0;
+    CHECK(db->createUser("perm@example.com", "argon2id$x", "Перм", userId).ok);
+    CHECK(userId > 0);
+
+    // По умолчанию разрешения нет.
+    CHECK_EQ(db->getToolPermission(userId, "send_email"), std::string(""));
+    // Установка и чтение.
+    CHECK(db->setToolPermission(userId, "send_email", "allow").ok);
+    CHECK_EQ(db->getToolPermission(userId, "send_email"), std::string("allow"));
+    // Недопустимый режим отклоняется.
+    CHECK(!db->setToolPermission(userId, "send_email", "bogus").ok);
+    CHECK_EQ(db->getToolPermission(userId, "send_email"), std::string("allow"));
+    // Список разрешений.
+    CHECK(db->setToolPermission(userId, "book_table", "deny").ok);
+    const auto perms = db->listToolPermissions(userId);
+    CHECK_EQ(perms.size(), static_cast<std::size_t>(2));
+
+    // Отложенное действие: создание → поиск → список → разрешение.
+    aura::PendingActionRecord pending;
+    pending.userId = userId;
+    pending.tool = "send_email";
+    pending.args = Json::object();
+    pending.args.set("to", Json("x@example.com"));
+    pending.summary = "Отправить письмо на x@example.com";
+    const long long id = db->createPendingAction(pending);
+    CHECK(id > 0);
+    const auto found = db->findPendingAction(id);
+    CHECK(found.has_value());
+    CHECK_EQ(found->status, std::string("pending"));
+    CHECK_EQ(found->tool, std::string("send_email"));
+    CHECK_EQ(found->args.getString("to"), std::string("x@example.com"));
+    CHECK_EQ(db->listPendingActions(userId, "pending", 10).size(), static_cast<std::size_t>(1));
+    CHECK_EQ(db->listPendingActions(userId, "executed", 10).size(), static_cast<std::size_t>(0));
+
+    Json outcome = Json::object();
+    outcome.set("ok", Json(true));
+    CHECK(db->resolvePendingAction(id, "executed", outcome).ok);
+    CHECK_EQ(db->findPendingAction(id)->status, std::string("executed"));
+    CHECK_EQ(db->listPendingActions(userId, "pending", 10).size(), static_cast<std::size_t>(0));
+    // Несуществующее действие не разрешается.
+    CHECK(!db->resolvePendingAction(99999, "executed", outcome).ok);
+}
+
+TEST(ai_permissions_ws_and_confirmation_barrier) {
+    Fixture fixture;
+    auto session = fixture.makeSession();
+    fixture.registerUser(session, "dan@example.com", "Дан");
+    const long long userId = session->userId();
+    auto& db = fixture.server->database().db();
+
+    // permissions.list: каталог с эффективными режимами и флагом опасности.
+    const Json list = fixture.call(session, "permissions.list");
+    CHECK_EQ(list.getString("type"), std::string("ok"));
+    const Json listPayload = list.get("payload");
+    const Json toolsList = listPayload.get("tools");
+    bool sawEmail = false;
+    for (const auto& tool : toolsList.items()) {
+        if (tool.getString("tool") == "send_email") {
+            sawEmail = true;
+            CHECK(tool.getBool("dangerous"));
+            CHECK_EQ(tool.getString("default_mode"), std::string("ask"));
+            CHECK_EQ(tool.getString("mode"), std::string("ask"));  // по умолчанию
+        }
+    }
+    CHECK(sawEmail);
+
+    // permissions.set: валидный режим применяется, невалидный отклоняется.
+    Json setReq = Json::object();
+    setReq.set("tool", Json("send_email"));
+    setReq.set("mode", Json("allow"));
+    CHECK_EQ(fixture.call(session, "permissions.set", setReq).getString("type"), std::string("ok"));
+    setReq.set("mode", Json("bogus"));
+    CHECK_EQ(fixture.call(session, "permissions.set", setReq).getString("code"), std::string("bad_request"));
+    setReq.set("tool", Json("nope"));
+    setReq.set("mode", Json("allow"));
+    CHECK_EQ(fixture.call(session, "permissions.set", setReq).getString("code"), std::string("bad_request"));
+
+    // Барьер подтверждения: создаём отложенное опасное действие (как это
+    // сделал бы агент) и подтверждаем — сервер исполняет инструмент.
+    aura::PendingActionRecord pending;
+    pending.userId = userId;
+    pending.tool = "send_email";
+    pending.args = Json::object();
+    pending.args.set("to", Json("x@example.com"));
+    pending.args.set("body", Json("привет"));
+    pending.summary = "Отправить письмо на x@example.com";
+    const long long id = db.createPendingAction(pending);
+    CHECK(id > 0);
+
+    const Json pendingList = fixture.call(session, "confirmation.list");
+    CHECK_EQ(pendingList.getString("type"), std::string("ok"));
+    CHECK(pendingList.get("payload").get("actions").size() >= 1);
+
+    Json approve = Json::object();
+    approve.set("id", Json(id));
+    const Json approved = fixture.call(session, "confirmation.approve", approve);
+    CHECK_EQ(approved.getString("type"), std::string("ok"));
+    CHECK_EQ(approved.get("payload").getString("status"), std::string("executed"));
+    // Повторное подтверждение уже обработанного — ошибка.
+    CHECK_EQ(fixture.call(session, "confirmation.approve", approve).getString("code"),
+             std::string("bad_request"));
+
+    // Отклонение: действие помечается denied, не исполняется.
+    aura::PendingActionRecord second;
+    second.userId = userId;
+    second.tool = "book_table";
+    second.summary = "Забронировать столик";
+    const long long id2 = db.createPendingAction(second);
+    Json deny = Json::object();
+    deny.set("id", Json(id2));
+    const Json denied = fixture.call(session, "confirmation.deny", deny);
+    CHECK_EQ(denied.get("payload").getString("status"), std::string("denied"));
+
+    // Чужое отложенное действие недоступно (проверка владения).
+    auto other = fixture.makeSession("other");
+    fixture.registerUser(other, "eve@example.com", "Ева");
+    Json approveOther = Json::object();
+    approveOther.set("id", Json(id));
+    CHECK_EQ(fixture.call(other, "confirmation.approve", approveOther).getString("code"),
+             std::string("not_found"));
 }
 
 }  // namespace

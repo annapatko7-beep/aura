@@ -164,6 +164,34 @@ struct MemoryRecord {
     Json toJson() const;
 };
 
+// Разрешение пользователя на инструмент Ауры (этап 8).
+// mode: "allow" | "ask" | "deny". Пустая строка mode = «не задано» (нет строки).
+struct ToolPermissionRecord {
+    long long userId = 0;
+    std::string tool;
+    std::string mode = "ask";
+    std::string updatedAt;
+
+    Json toJson() const;
+};
+
+// Отложенное действие, требующее подтверждения (барьер подтверждения).
+// status: pending | approved | denied | executed | failed | expired.
+struct PendingActionRecord {
+    long long id = 0;
+    long long userId = 0;
+    long long chatId = 0;
+    std::string tool;
+    Json args = Json::object();
+    std::string summary;
+    std::string status = "pending";
+    Json result = Json::object();
+    std::string createdAt;
+    std::string resolvedAt;
+
+    Json toJson() const;
+};
+
 struct DatabaseError {
     bool ok = true;
     std::string message;
@@ -276,6 +304,26 @@ public:
     // UserPreferences
     virtual Json getPreferences(long long userId) = 0;
     virtual DatabaseError setPreferences(long long userId, const Json& preferences) = 0;
+
+    // ToolPermissions (этап 8, ядро безопасности).
+    // getToolPermission возвращает "" если разрешение не задано (нет строки).
+    virtual std::string getToolPermission(long long userId, const std::string& tool) = 0;
+    virtual std::vector<ToolPermissionRecord> listToolPermissions(long long userId) = 0;
+    virtual DatabaseError setToolPermission(long long userId,
+                                            const std::string& tool,
+                                            const std::string& mode) = 0;
+
+    // PendingActions (барьер подтверждения опасных операций).
+    // createPendingAction возвращает id созданной записи (0 при ошибке).
+    virtual long long createPendingAction(const PendingActionRecord& record) = 0;
+    virtual std::optional<PendingActionRecord> findPendingAction(long long id) = 0;
+    virtual std::vector<PendingActionRecord> listPendingActions(long long userId,
+                                                                const std::string& status,
+                                                                int limit) = 0;
+    // resolvePendingAction переводит запись в итоговый статус и сохраняет result.
+    virtual DatabaseError resolvePendingAction(long long id,
+                                               const std::string& status,
+                                               const Json& result) = 0;
 };
 
 std::unique_ptr<IDatabase> makePostgresDatabase(const std::string& url);
