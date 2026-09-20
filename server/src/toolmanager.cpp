@@ -2,6 +2,7 @@
 #include "aura/toolmanager.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <map>
 #include <string>
@@ -205,10 +206,23 @@ ToolManager::Result ToolManager::createReminder(long long userId, const Json& ar
         result.error = saved.message;
         return result;
     }
+
+    // Напоминание — полноценная задача (этап 8): планировщик пришлёт уведомление,
+    // когда наступит remind_at. Принимаем только ISO-метку (иначе «asap»/пусто).
+    const bool isoTimestamp = fireAt.size() >= 10 && std::isdigit(static_cast<unsigned char>(fireAt[0])) != 0 &&
+                              fireAt.find('-') != std::string::npos;
+    long long taskId = 0;
+    TaskRecord task;
+    task.userId = userId;
+    task.title = text;
+    task.remindAt = isoTimestamp ? fireAt : "";
+    const DatabaseError taskSaved = database_.db().createTask(task, taskId);
+
     result.ok = true;
     result.data.set("reminder_id", Json(crypto::toHex(crypto::sha256(stored)).substr(0, 10)));
     result.data.set("text", Json(text));
     result.data.set("fire_at", Json(fireAt));
+    if (taskSaved.ok && taskId > 0) result.data.set("task_id", Json(taskId));
     return result;
 }
 

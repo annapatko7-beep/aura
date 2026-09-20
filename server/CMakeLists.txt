@@ -48,6 +48,7 @@ set(AURA_SOURCES
     src/protocol.cpp
     src/server.cpp
     src/session.cpp
+    src/taskmanager.cpp
     src/toolmanager.cpp
     src/totp.cpp
     src/ws.cpp
@@ -71,6 +72,7 @@ set(AURA_HEADERS
     include/aura/protocol.h
     include/aura/server.h
     include/aura/session.h
+    include/aura/taskmanager.h
     include/aura/toolmanager.h
     include/aura/ws.h
 )

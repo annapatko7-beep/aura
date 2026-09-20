@@ -534,6 +534,7 @@ struct Fixture {
         config.logLevel = "warn";
         config.aiServiceUrl = "http://127.0.0.1:1";  // гарантированно недоступен
         config.aiTimeoutMs = 500;
+        config.schedulerIntervalMs = 0;  // фоновый поток не нужен: tick зовём вручную
         server = std::make_unique<aura::Server>(config);
         std::string error;
         if (!server->start(error)) {
@@ -1430,6 +1431,103 @@ TEST(ai_permissions_ws_and_confirmation_barrier) {
     approveOther.set("id", Json(id));
     CHECK_EQ(fixture.call(other, "confirmation.approve", approveOther).getString("code"),
              std::string("not_found"));
+}
+
+TEST(ai_tasks_crud_ws) {
+    Fixture fixture;
+    auto session = fixture.makeSession();
+    fixture.registerUser(session, "task@example.com", "Таск");
+
+    Json create = Json::object();
+    create.set("title", Json("Купить кофе"));
+    create.set("notes", Json("эспрессо"));
+    create.set("priority", Json(2));
+    const Json created = fixture.call(session, "tasks.create", create);
+    CHECK_EQ(created.getString("type"), std::string("ok"));
+    const long long taskId = created.get("payload").getInt("id");
+    CHECK(taskId > 0);
+    CHECK_EQ(created.get("payload").getString("status"), std::string("pending"));
+    CHECK_EQ(created.get("payload").getInt("priority"), 2);
+
+    // Пустой заголовок отклоняется.
+    Json empty = Json::object();
+    empty.set("title", Json(""));
+    CHECK_EQ(fixture.call(session, "tasks.create", empty).getString("code"), std::string("bad_request"));
+
+    // Список содержит задачу.
+    CHECK(fixture.call(session, "tasks.list", Json::object()).get("payload").get("tasks").size() >= 1);
+
+    // Отметка «выполнено».
+    Json complete = Json::object();
+    complete.set("id", Json(taskId));
+    CHECK_EQ(fixture.call(session, "tasks.complete", complete).get("payload").getString("status"),
+             std::string("done"));
+
+    // Фильтр по статусу pending теперь пуст.
+    Json pending = Json::object();
+    pending.set("status", Json("pending"));
+    CHECK_EQ(fixture.call(session, "tasks.list", pending).get("payload").get("tasks").size(),
+             static_cast<std::size_t>(0));
+
+    // Чужая задача недоступна (проверка владения).
+    auto other = fixture.makeSession("other");
+    fixture.registerUser(other, "other@example.com", "Другой");
+    CHECK_EQ(fixture.call(other, "tasks.complete", complete).getString("code"), std::string("not_found"));
+
+    // Удаление: первый раз ок, второй — not_found.
+    CHECK_EQ(fixture.call(session, "tasks.delete", complete).getString("type"), std::string("ok"));
+    CHECK_EQ(fixture.call(session, "tasks.delete", complete).getString("code"), std::string("not_found"));
+}
+
+TEST(ai_task_scheduler_tick) {
+    Fixture fixture;
+    auto session = fixture.makeSession();
+    fixture.registerUser(session, "sched@example.com", "Шед");
+    auto& db = fixture.server->database().db();
+
+    // Задача с напоминанием, срок которого уже наступил (remind_at в прошлом).
+    aura::TaskRecord task;
+    task.userId = session->userId();
+    task.title = "Позвонить клиенту";
+    task.remindAt = "2020-01-01T00:00:00.000Z";  // заведомо <= now
+    long long id = 0;
+    CHECK(db.createTask(task, id).ok);
+    CHECK(db.findTask(id)->remindedAt.empty());
+    CHECK_EQ(db.listDueTasks(10).size(), static_cast<std::size_t>(1));
+
+    // Проход планировщика помечает напомненным и возвращает задачу.
+    CHECK_EQ(fixture.server->runSchedulerTick(10), static_cast<std::size_t>(1));
+    CHECK(!db.findTask(id)->remindedAt.empty());
+    // Повторно не отправляется (одноразово).
+    CHECK_EQ(fixture.server->runSchedulerTick(10), static_cast<std::size_t>(0));
+
+    // Задача без remind_at не становится due.
+    aura::TaskRecord noRemind;
+    noRemind.userId = session->userId();
+    noRemind.title = "Без напоминания";
+    long long id2 = 0;
+    CHECK(db.createTask(noRemind, id2).ok);
+    CHECK_EQ(fixture.server->runSchedulerTick(10), static_cast<std::size_t>(0));
+}
+
+TEST(ai_create_reminder_makes_task) {
+    Fixture fixture;
+    auto session = fixture.makeSession();
+    fixture.registerUser(session, "rem@example.com", "Рем");
+
+    Json run = Json::object();
+    run.set("tool", Json("create_reminder"));
+    Json args = Json::object();
+    args.set("text", Json("выпить воды"));
+    args.set("at", Json("2030-01-01T10:00:00.000Z"));  // будущее → не due
+    run.set("args", args);
+    const Json result = fixture.call(session, "tool.run", run);
+    CHECK_EQ(result.getString("type"), std::string("ok"));
+    CHECK(result.get("payload").getInt("task_id") > 0);
+
+    // Напоминание видно как задача; срок в будущем → планировщик не трогает.
+    CHECK(fixture.call(session, "tasks.list", Json::object()).get("payload").get("tasks").size() >= 1);
+    CHECK_EQ(fixture.server->runSchedulerTick(10), static_cast<std::size_t>(0));
 }
 
 }  // namespace

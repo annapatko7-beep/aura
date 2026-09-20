@@ -121,4 +121,21 @@ Json PendingActionRecord::toJson() const {
     return json;
 }
 
+Json TaskRecord::toJson() const {
+    Json json = Json::object();
+    json.set("id", Json(id));
+    json.set("user_id", Json(userId));
+    json.set("chat_id", Json(chatId));
+    json.set("title", Json(title));
+    json.set("notes", Json(notes));
+    json.set("status", Json(status));
+    json.set("priority", Json(priority));
+    if (!dueAt.empty()) json.set("due_at", Json(dueAt));
+    if (!remindAt.empty()) json.set("remind_at", Json(remindAt));
+    if (!remindedAt.empty()) json.set("reminded_at", Json(remindedAt));
+    json.set("created_at", Json(createdAt));
+    if (!completedAt.empty()) json.set("completed_at", Json(completedAt));
+    return json;
+}
+
 }  // namespace aura

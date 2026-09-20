@@ -192,6 +192,26 @@ struct PendingActionRecord {
     Json toJson() const;
 };
 
+// Задача/напоминание (этап 8). status: pending | done | cancelled.
+// remindAt — когда планировщик должен прислать уведомление; remindedAt
+// отмечается после отправки (одноразово).
+struct TaskRecord {
+    long long id = 0;
+    long long userId = 0;
+    long long chatId = 0;
+    std::string title;
+    std::string notes;
+    std::string status = "pending";
+    int priority = 0;
+    std::string dueAt;
+    std::string remindAt;
+    std::string remindedAt;
+    std::string createdAt;
+    std::string completedAt;
+
+    Json toJson() const;
+};
+
 struct DatabaseError {
     bool ok = true;
     std::string message;
@@ -324,6 +344,17 @@ public:
     virtual DatabaseError resolvePendingAction(long long id,
                                                const std::string& status,
                                                const Json& result) = 0;
+
+    // Tasks (задачи и напоминания, этап 8).
+    virtual DatabaseError createTask(const TaskRecord& record, long long& outId) = 0;
+    virtual std::optional<TaskRecord> findTask(long long id) = 0;
+    // status пустой → все задачи пользователя.
+    virtual std::vector<TaskRecord> listTasks(long long userId, const std::string& status, int limit) = 0;
+    virtual DatabaseError setTaskStatus(long long id, const std::string& status) = 0;
+    virtual DatabaseError deleteTask(long long id) = 0;
+    // Планировщик: задачи с remind_at <= now, статус pending, ещё не напомненные.
+    virtual std::vector<TaskRecord> listDueTasks(int limit) = 0;
+    virtual DatabaseError markTaskReminded(long long id) = 0;
 };
 
 std::unique_ptr<IDatabase> makePostgresDatabase(const std::string& url);

@@ -50,6 +50,7 @@ Config Config::fromEnv() {
     config.loginWindowSec = intOr("AURA_LOGIN_WINDOW", config.loginWindowSec);
     config.pingIntervalSec = intOr("AURA_PING_INTERVAL", config.pingIntervalSec);
     config.socketTimeoutSec = intOr("AURA_SOCKET_TIMEOUT", config.socketTimeoutSec);
+    config.schedulerIntervalMs = intOr("AURA_SCHEDULER_INTERVAL_MS", config.schedulerIntervalMs);
     config.logLevel = envOr("AURA_LOG_LEVEL", config.logLevel);
     return config;
 }

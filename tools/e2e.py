@@ -324,6 +324,44 @@ async def main() -> int:
         check(denied.get("payload", {}).get("status") == "denied",
               "confirmation.deny отклонил действие", denied.get("payload"))
 
+    # ------------------------------------------- задачи и напоминания (этап 8)
+    print("\n3d. Задачи, напоминания и планировщик (этап 8)")
+
+    task_new = await anna.call("tasks.create", {
+        "title": "Подготовить презентацию",
+        "notes": "к пятнице",
+        "priority": 2,
+    })
+    check(task_new.get("type") == "ok", "tasks.create создал задачу", task_new.get("payload"))
+    task_id = task_new.get("payload", {}).get("id", 0)
+    check(task_id > 0 and task_new.get("payload", {}).get("status") == "pending",
+          "задача в статусе pending", task_new.get("payload"))
+
+    tasks_list = await anna.call("tasks.list", {})
+    check(any(t.get("id") == task_id for t in tasks_list.get("payload", {}).get("tasks", [])),
+          "tasks.list содержит задачу", tasks_list.get("payload"))
+
+    done = await anna.call("tasks.complete", {"id": task_id})
+    check(done.get("payload", {}).get("status") == "done",
+          "tasks.complete отметил задачу выполненной", done.get("payload"))
+
+    # Напоминание с прошедшим сроком → планировщик отправляет уведомление.
+    await anna.call("tasks.create", {"title": "Позвонить клиенту",
+                                     "remind_at": "2020-01-01T00:00:00.000Z"})
+    due = await anna.call("tasks.due", {})
+    check(due.get("payload", {}).get("sent", 0) >= 1,
+          "планировщик отправил наступившее напоминание", due.get("payload"))
+    await asyncio.sleep(0.3)
+    check(len(anna.events_of("task.due")) >= 1, "клиент получил событие task.due")
+
+    # create_reminder через инструмент тоже создаёт задачу.
+    remind = await anna.call("tool.run", {
+        "tool": "create_reminder",
+        "args": {"text": "выпить воды", "at": "2030-01-01T10:00:00.000Z"},
+    })
+    check(remind.get("payload", {}).get("task_id", 0) > 0,
+          "create_reminder создал задачу", remind.get("payload"))
+
     # ------------------------------------------------------------ речь (STT)
     print("\n3b. Распознавание речи (C++-сервер → Python AI Service)")
 

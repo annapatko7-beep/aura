@@ -5,6 +5,8 @@
 // переключается на встроенное хранилище с предупреждением в лог.
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <sstream>
 #include <vector>
@@ -1164,7 +1166,139 @@ public:
         return DatabaseError::success();
     }
 
+    // -------------------------------------------------------------- tasks
+    DatabaseError createTask(const TaskRecord& record, long long& outId) override {
+        if (record.title.empty()) return DatabaseError::failure("пустой заголовок задачи");
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        const std::string status = record.status.empty() ? std::string("pending") : record.status;
+        if (!execute(
+                "INSERT INTO tasks (user_id, chat_id, title, notes, status, priority, due_at, remind_at) "
+                "VALUES ($1, NULLIF($2, '0')::bigint, $3, $4, $5, $6, "
+                "NULLIF($7, '')::timestamptz, NULLIF($8, '')::timestamptz) RETURNING id",
+                {std::to_string(record.userId), std::to_string(record.chatId), record.title, record.notes,
+                 status, std::to_string(record.priority), record.dueAt, record.remindAt},
+                &result)) {
+            PQclear(result);
+            return DatabaseError::failure(lastError_);
+        }
+        if (PQntuples(result) > 0) outId = std::atoll(value_(result, 0, 0).c_str());
+        PQclear(result);
+        return DatabaseError::success();
+    }
+
+    std::optional<TaskRecord> findTask(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        if (!execute(taskSelect() + " WHERE id = $1", {std::to_string(id)}, &result)) return std::nullopt;
+        std::optional<TaskRecord> record;
+        if (PQntuples(result) > 0) record = readTask(result, 0);
+        PQclear(result);
+        return record;
+    }
+
+    std::vector<TaskRecord> listTasks(long long userId, const std::string& status, int limit) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<TaskRecord> entries;
+        PGresult* result = nullptr;
+        bool ok = false;
+        if (status.empty()) {
+            ok = execute(taskSelect() + " WHERE user_id = $1 ORDER BY id DESC LIMIT $2",
+                         {std::to_string(userId), std::to_string(limit)}, &result);
+        } else {
+            ok = execute(taskSelect() + " WHERE user_id = $1 AND status = $2 ORDER BY id DESC LIMIT $3",
+                         {std::to_string(userId), status, std::to_string(limit)}, &result);
+        }
+        if (!ok) return entries;
+        for (int row = 0; row < PQntuples(result); ++row) entries.push_back(readTask(result, row));
+        PQclear(result);
+        return entries;
+    }
+
+    DatabaseError setTaskStatus(long long id, const std::string& status) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute(
+                "UPDATE tasks SET status = $2, "
+                "completed_at = CASE WHEN $2 = 'done' THEN now() ELSE completed_at END WHERE id = $1",
+                {std::to_string(id), status}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool updated = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!updated) return DatabaseError::failure("задача не найдена");
+        return DatabaseError::success();
+    }
+
+    DatabaseError deleteTask(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute("DELETE FROM tasks WHERE id = $1", {std::to_string(id)}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool deleted = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!deleted) return DatabaseError::failure("задача не найдена");
+        return DatabaseError::success();
+    }
+
+    std::vector<TaskRecord> listDueTasks(int limit) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<TaskRecord> entries;
+        PGresult* result = nullptr;
+        if (!execute(taskSelect() +
+                         " WHERE status = 'pending' AND reminded_at IS NULL "
+                         "AND remind_at IS NOT NULL AND remind_at <= now() ORDER BY remind_at LIMIT $1",
+                     {std::to_string(limit)}, &result)) {
+            return entries;
+        }
+        for (int row = 0; row < PQntuples(result); ++row) entries.push_back(readTask(result, row));
+        PQclear(result);
+        return entries;
+    }
+
+    DatabaseError markTaskReminded(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute("UPDATE tasks SET reminded_at = now() WHERE id = $1", {std::to_string(id)}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool updated = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!updated) return DatabaseError::failure("задача не найдена");
+        return DatabaseError::success();
+    }
+
 private:
+    static std::string taskSelect() {
+        const char* ts = "to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')";
+        char due[96], remind[96], reminded[96], created[96], completed[96];
+        std::snprintf(due, sizeof(due), ts, "due_at");
+        std::snprintf(remind, sizeof(remind), ts, "remind_at");
+        std::snprintf(reminded, sizeof(reminded), ts, "reminded_at");
+        std::snprintf(created, sizeof(created), ts, "created_at");
+        std::snprintf(completed, sizeof(completed), ts, "completed_at");
+        return std::string("SELECT id, user_id, COALESCE(chat_id, 0), title, notes, status, priority, ") +
+               due + ", " + remind + ", " + reminded + ", " + created + ", " + completed + " FROM tasks";
+    }
+
+    TaskRecord readTask(PGresult* result, int row) const {
+        TaskRecord record;
+        record.id = std::atoll(value_(result, row, 0).c_str());
+        record.userId = std::atoll(value_(result, row, 1).c_str());
+        record.chatId = std::atoll(value_(result, row, 2).c_str());
+        record.title = value_(result, row, 3);
+        record.notes = value_(result, row, 4);
+        record.status = value_(result, row, 5);
+        record.priority = std::atoi(value_(result, row, 6).c_str());
+        record.dueAt = value_(result, row, 7);
+        record.remindAt = value_(result, row, 8);
+        record.remindedAt = value_(result, row, 9);
+        record.createdAt = value_(result, row, 10);
+        record.completedAt = value_(result, row, 11);
+        return record;
+    }
+
     static std::string pendingActionSelect() {
         return "SELECT id, user_id, COALESCE(chat_id, 0), tool, args::text, summary, status, result::text, "
                "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), "

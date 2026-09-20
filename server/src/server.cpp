@@ -2,6 +2,7 @@
 #include "aura/server.h"
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 #include "aura/log.h"
@@ -43,6 +44,7 @@ bool Server::start(std::string& error) {
     memory_ = std::make_unique<MemoryManager>(*database_, config_);
     tools_ = std::make_unique<ToolManager>(config_, *database_, *chats_);
     agent_ = std::make_unique<AgentManager>(config_, *database_, *memory_, *tools_, *chats_);
+    taskManager_ = std::make_unique<TaskManager>(*database_, connections_);
 
     registerHandlers();
 
@@ -58,13 +60,39 @@ bool Server::start(std::string& error) {
         AURA_LOG(log::Level::Warn, "server")
             << "AI-сервис не отвечает (" << config_.aiServiceUrl << "): агент вернёт ошибку upstream_error";
     }
+
+    // Фоновый планировщик напоминаний (0 = выключен, например в тестах).
+    if (config_.schedulerIntervalMs > 0 && !schedulerThread_) {
+        schedulerThread_ = std::make_unique<std::thread>(&Server::schedulerLoop, this);
+    }
     return true;
+}
+
+void Server::schedulerLoop() {
+    while (!stopping_.load()) {
+        {
+            std::unique_lock<std::mutex> lock(schedulerMutex_);
+            schedulerCv_.wait_for(lock, std::chrono::milliseconds(config_.schedulerIntervalMs),
+                                  [this] { return stopping_.load(); });
+        }
+        if (stopping_.load()) break;
+        runSchedulerTick(100);
+    }
+}
+
+std::size_t Server::runSchedulerTick(int limit) {
+    if (!taskManager_) return 0;
+    return taskManager_->dueTick(limit).size();
 }
 
 void Server::stop() {
     const bool already = stopping_.exchange(true);
     if (listener_) listener_->stop();
     connections_.closeAll(1001, "server shutdown");
+    // Останавливаем фоновый планировщик и дожидаемся его.
+    schedulerCv_.notify_all();
+    if (schedulerThread_ && schedulerThread_->joinable()) schedulerThread_->join();
+    schedulerThread_.reset();
     if (!already) waitCondition_.notify_all();
 }
 
@@ -610,6 +638,57 @@ void Server::registerHandlers() {
         const auto result = agent_->resolveConfirmation(session->userId(), request.payload.getInt("id"), false);
         return result.ok ? protocol::ok(request.id, result.payload)
                          : protocol::error(request.id, result.code, result.message);
+    });
+
+    // ------------------------------------------------------- задачи (этап 8)
+    registerHandler("tasks.list", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        const auto result = taskManager_->list(session->userId(),
+                                               request.payload.getString("status"),
+                                               boundedLimit(request.payload, "limit", 50, 200));
+        return protocol::ok(request.id, result.payload);
+    });
+
+    registerHandler("tasks.create", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        const auto result = taskManager_->create(session->userId(),
+                                                 payloadChatId(request.payload),
+                                                 request.payload.getString("title"),
+                                                 request.payload.getString("notes"),
+                                                 request.payload.getString("due_at"),
+                                                 request.payload.getString("remind_at"),
+                                                 static_cast<int>(request.payload.getInt("priority", 0)));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("tasks.complete", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        const auto result = taskManager_->setStatus(session->userId(), request.payload.getInt("id"), "done");
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("tasks.cancel", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        const auto result = taskManager_->setStatus(session->userId(), request.payload.getInt("id"), "cancelled");
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("tasks.reopen", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        const auto result = taskManager_->setStatus(session->userId(), request.payload.getInt("id"), "pending");
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("tasks.delete", [this](std::shared_ptr<Session> session, const protocol::Request& request) {
+        const auto result = taskManager_->remove(session->userId(), request.payload.getInt("id"));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    // Ручной проход планировщика: отправить наступившие напоминания сейчас.
+    registerHandler("tasks.due", [this](std::shared_ptr<Session>, const protocol::Request& request) {
+        Json payload = Json::object();
+        payload.set("sent", Json(static_cast<long long>(runSchedulerTick(100))));
+        return protocol::ok(request.id, payload);
     });
 }
 

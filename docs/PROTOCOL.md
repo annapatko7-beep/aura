@@ -218,6 +218,28 @@ result, …)` со статусами `pending`/`approved`/`denied`/`executed`/`
 Изменения разрешений и подтверждения пишутся в `audit_logs`
 (`tool_permission`, `action_approved`, `action_denied`).
 
+### Задачи и напоминания (этап 8)
+
+Задачи хранятся в `tasks(id, user_id, chat_id, title, notes, status, priority,
+due_at, remind_at, reminded_at, …)`; статусы `pending`/`done`/`cancelled`.
+Напоминание — задача с `remind_at`: фоновый планировщик сервера
+(`AURA_SCHEDULER_INTERVAL_MS`, по умолчанию 30 с) находит задачи с наступившим
+`remind_at`, помечает их отправленными (`reminded_at`, одноразово) и шлёт
+владельцу push-событие `task.due`. Инструмент `create_reminder` тоже создаёт
+задачу (возвращает `task_id`).
+
+| тип | payload | ответ |
+| --- | --- | --- |
+| `tasks.list` | `status?`, `limit?` | `tasks[]` |
+| `tasks.create` | `title`, `notes?`, `due_at?`, `remind_at?`, `priority?`, `chat_id?` | задача |
+| `tasks.complete` | `id` | задача со статусом `done` |
+| `tasks.cancel` | `id` | задача со статусом `cancelled` |
+| `tasks.reopen` | `id` | задача со статусом `pending` |
+| `tasks.delete` | `id` | `deleted`; чужая/несуществующая → `not_found` |
+| `tasks.due` | — | `sent` — сколько напоминаний отправлено (ручной проход планировщика) |
+
+Событие: `task.due` (владельцу задачи, когда наступил срок напоминания).
+
 ## HTTP API Python AI Service
 
 | метод | путь | назначение |

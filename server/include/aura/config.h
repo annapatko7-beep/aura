@@ -32,6 +32,7 @@ struct Config {
     int loginWindowSec = 300;                            // AURA_LOGIN_WINDOW
     int pingIntervalSec = 25;                            // AURA_PING_INTERVAL
     int socketTimeoutSec = 120;                          // AURA_SOCKET_TIMEOUT
+    int schedulerIntervalMs = 30000;                     // AURA_SCHEDULER_INTERVAL_MS (0 = выключен)
     std::string logLevel = "info";                       // AURA_LOG_LEVEL
 
     static Config fromEnv();

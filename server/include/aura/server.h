@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include "aura/agentmanager.h"
 #include "aura/authmanager.h"
@@ -18,6 +19,7 @@
 #include "aura/listener.h"
 #include "aura/memorymanager.h"
 #include "aura/protocol.h"
+#include "aura/taskmanager.h"
 #include "aura/toolmanager.h"
 
 namespace aura {
@@ -49,7 +51,11 @@ public:
     MemoryManager& memory() { return *memory_; }
     ToolManager& tools() { return *tools_; }
     AgentManager& agent() { return *agent_; }
+    TaskManager& taskManager() { return *taskManager_; }
     ConnectionManager& connections() { return connections_; }
+
+    // Один проход планировщика напоминаний (публично для тестов).
+    std::size_t runSchedulerTick(int limit = 100);
 
     // Обработка одного сообщения (публично: тестируется без сокетов).
     Json handleMessage(std::shared_ptr<Session> session, const Json& message);
@@ -70,6 +76,7 @@ private:
     std::unique_ptr<MemoryManager> memory_;
     std::unique_ptr<ToolManager> tools_;
     std::unique_ptr<AgentManager> agent_;
+    std::unique_ptr<TaskManager> taskManager_;
     std::unique_ptr<Listener> listener_;
     ConnectionManager connections_;
 
@@ -79,6 +86,12 @@ private:
     std::mutex waitMutex_;
     std::condition_variable waitCondition_;
     std::atomic<bool> stopping_{false};
+
+    // Фоновый планировщик напоминаний.
+    void schedulerLoop();
+    std::unique_ptr<std::thread> schedulerThread_;
+    std::mutex schedulerMutex_;
+    std::condition_variable schedulerCv_;
 };
 
 }  // namespace aura

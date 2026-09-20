@@ -974,7 +974,127 @@ public:
         return DatabaseError::failure("отложенное действие не найдено");
     }
 
+    // -------------------------------------------------------------- tasks
+    DatabaseError createTask(const TaskRecord& record, long long& outId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (record.title.empty()) return DatabaseError::failure("пустой заголовок задачи");
+        const long long id = nextId("tasks");
+        Json entry = Json::object();
+        entry.set("id", Json(id));
+        entry.set("user_id", Json(record.userId));
+        entry.set("chat_id", Json(record.chatId));
+        entry.set("title", Json(record.title));
+        entry.set("notes", Json(record.notes));
+        entry.set("status", Json(record.status.empty() ? std::string("pending") : record.status));
+        entry.set("priority", Json(record.priority));
+        entry.set("due_at", Json(record.dueAt));
+        entry.set("remind_at", Json(record.remindAt));
+        entry.set("reminded_at", Json(record.remindedAt));
+        entry.set("created_at", Json(isoNow()));
+        entry.set("completed_at", Json(record.completedAt));
+        table("tasks").push(entry);
+        flush();
+        outId = id;
+        return DatabaseError::success();
+    }
+
+    std::optional<TaskRecord> findTask(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& entry : table("tasks").items()) {
+            if (entry.getInt("id") == id) return toTask(entry);
+        }
+        return std::nullopt;
+    }
+
+    std::vector<TaskRecord> listTasks(long long userId, const std::string& status, int limit) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<TaskRecord> result;
+        for (const auto& entry : table("tasks").items()) {
+            if (entry.getInt("user_id") != userId) continue;
+            if (!status.empty() && entry.getString("status") != status) continue;
+            result.push_back(toTask(entry));
+        }
+        std::sort(result.begin(), result.end(),
+                  [](const TaskRecord& a, const TaskRecord& b) { return a.id > b.id; });
+        if (limit > 0 && static_cast<int>(result.size()) > limit) {
+            result.resize(static_cast<std::size_t>(limit));
+        }
+        return result;
+    }
+
+    DatabaseError setTaskStatus(long long id, const std::string& status) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("tasks")) {
+            if (entry.getInt("id") != id) continue;
+            entry.set("status", Json(status));
+            if (status == "done") entry.set("completed_at", Json(isoNow()));
+            flush();
+            return DatabaseError::success();
+        }
+        return DatabaseError::failure("задача не найдена");
+    }
+
+    DatabaseError deleteTask(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Json::Array& entries = mutableTable("tasks");
+        for (auto it = entries.begin(); it != entries.end(); ++it) {
+            if (it->getInt("id") == id) {
+                entries.erase(it);
+                flush();
+                return DatabaseError::success();
+            }
+        }
+        return DatabaseError::failure("задача не найдена");
+    }
+
+    std::vector<TaskRecord> listDueTasks(int limit) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const std::string now = isoNow();
+        std::vector<TaskRecord> result;
+        for (const auto& entry : table("tasks").items()) {
+            if (entry.getString("status") != "pending") continue;
+            if (!entry.getString("reminded_at").empty()) continue;  // уже напомнили
+            const std::string remindAt = entry.getString("remind_at");
+            if (remindAt.empty() || remindAt > now) continue;        // ещё не время
+            result.push_back(toTask(entry));
+        }
+        std::sort(result.begin(), result.end(),
+                  [](const TaskRecord& a, const TaskRecord& b) { return a.remindAt < b.remindAt; });
+        if (limit > 0 && static_cast<int>(result.size()) > limit) {
+            result.resize(static_cast<std::size_t>(limit));
+        }
+        return result;
+    }
+
+    DatabaseError markTaskReminded(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("tasks")) {
+            if (entry.getInt("id") != id) continue;
+            entry.set("reminded_at", Json(isoNow()));
+            flush();
+            return DatabaseError::success();
+        }
+        return DatabaseError::failure("задача не найдена");
+    }
+
 private:
+    TaskRecord toTask(const Json& entry) const {
+        TaskRecord record;
+        record.id = entry.getInt("id");
+        record.userId = entry.getInt("user_id");
+        record.chatId = entry.getInt("chat_id");
+        record.title = entry.getString("title");
+        record.notes = entry.getString("notes");
+        record.status = entry.getString("status", "pending");
+        record.priority = static_cast<int>(entry.getInt("priority"));
+        record.dueAt = entry.getString("due_at");
+        record.remindAt = entry.getString("remind_at");
+        record.remindedAt = entry.getString("reminded_at");
+        record.createdAt = entry.getString("created_at");
+        record.completedAt = entry.getString("completed_at");
+        return record;
+    }
+
     ToolPermissionRecord toToolPermission(const Json& entry) const {
         ToolPermissionRecord record;
         record.userId = entry.getInt("user_id");

@@ -249,6 +249,29 @@ CREATE TABLE IF NOT EXISTS pending_actions (
 
 CREATE INDEX IF NOT EXISTS pending_actions_user_idx ON pending_actions (user_id, status, id DESC);
 
+-- ----------------------------------------------------------------- Tasks ----
+-- Задачи и напоминания (этап 8). remind_at — когда планировщик должен
+-- прислать уведомление; reminded_at отмечается после отправки (одноразово).
+CREATE TABLE IF NOT EXISTS tasks (
+    id           BIGSERIAL     PRIMARY KEY,
+    user_id      BIGINT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    chat_id      BIGINT        REFERENCES chats(id) ON DELETE SET NULL,
+    title        TEXT          NOT NULL,
+    notes        TEXT          NOT NULL DEFAULT '',
+    status       TEXT          NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending', 'done', 'cancelled')),
+    priority     INT           NOT NULL DEFAULT 0,
+    due_at       TIMESTAMPTZ,
+    remind_at    TIMESTAMPTZ,
+    reminded_at  TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS tasks_user_idx ON tasks (user_id, status, id DESC);
+CREATE INDEX IF NOT EXISTS tasks_due_idx ON tasks (remind_at)
+    WHERE status = 'pending' AND reminded_at IS NULL;
+
 -- --------------------------------------------------------------- Триггер ---
 CREATE OR REPLACE FUNCTION aura_touch_updated_at() RETURNS trigger AS $$
 BEGIN
