@@ -52,11 +52,25 @@ class AuraAgent:
         llm: Optional[BaseLLM] = None,
         store: Optional[memory_module.MemoryStore] = None,
         tools: Optional[ToolManager] = None,
+        embed_client: Optional[memory_module.EmbeddingClient] = None,
     ):
         self.settings = settings or get_settings()
         self.llm = llm or build_llm(self.settings)
         self.fallback_llm = MockLLM()
         self.store = store or memory_module.build_store(self.settings.memory_backend)
+        # Гибридный RAG: семантический клиент включается только в hybrid-режиме
+        # с заданным эндпоинтом эмбеддингов; иначе ранжирование лексическое.
+        if embed_client is not None:
+            self.embed_client = embed_client
+        elif self.settings.rag_is_hybrid and self.settings.embeddings_url:
+            self.embed_client = memory_module.EmbeddingClient(
+                url=self.settings.embeddings_url,
+                model=self.settings.embeddings_model,
+                api_key=self.settings.embeddings_api_key,
+                timeout=self.settings.embeddings_timeout,
+            )
+        else:
+            self.embed_client = None
         self.tools = tools or ToolManager(
             ToolBackends(
                 mode=self.settings.tools_backend,
@@ -80,7 +94,9 @@ class AuraAgent:
         reply = str(payload.get("reply") or "")
         confidence = float(payload.get("confidence") or 0.5)
 
-        relevant_memory = memory_module.load_context_memory(self.store, context)
+        relevant_memory = memory_module.load_context_memory(
+            self.store, context, embed_client=self.embed_client
+        )
         actions = [ToolCall(**item) for item in normalize_actions(payload.get("actions"))]
         results: List[ToolResult] = []
 

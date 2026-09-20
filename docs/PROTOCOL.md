@@ -226,7 +226,7 @@ result, …)` со статусами `pending`/`approved`/`denied`/`executed`/`
 | `POST` | `/v1/agent/negotiate` | Agent-to-Agent переговоры |
 | `POST` | `/v1/speech/transcribe` | распознавание речи (Whisper-совместимое, ru/en/auto) |
 | `POST` | `/v1/memory/extract` | извлечение фактов в память |
-| `GET` | `/v1/memory/{user_key}` | записи памяти (можно `?query=`) |
+| `GET` | `/v1/memory/{user_key}` | записи памяти (можно `?query=` — гибридный RAG) |
 | `POST` | `/v1/planner/slots` | свободные слоты |
 | `POST` | `/v1/planner/understand` | разбор фразы (намерение, окно, длительность) |
 | `GET` | `/v1/tools` | список инструментов |
@@ -234,6 +234,25 @@ result, …)` со статусами `pending`/`approved`/`denied`/`executed`/`
 
 Если задан `AURA_AI_TOKEN`, все запросы требуют заголовок `X-Aura-Token`.
 Swagger — `/docs`.
+
+### Гибридный RAG памяти (этап 8)
+
+Ранжирование воспоминаний под запрос (`memory.rank`, используется в
+`load_context_memory` и `GET /v1/memory/{user_key}?query=`) — гибридное:
+
+* **лексика (Okapi BM25)** по основам токенов + буст весом записи — работает
+  всегда, без внешних зависимостей;
+* **семантика** по косинусной близости эмбеддингов — включается, когда задан
+  эндпоинт эмбеддингов; итоговый порядок объединяется **Reciprocal Rank Fusion**;
+* **graceful degrade**: если эмбеддинги не настроены или недоступны (ошибка
+  сети/формата), ранжирование остаётся лексическим и не падает.
+
+Настройки AI-сервиса: `AURA_RAG_MODE` (`lexical` | `hybrid` | `auto`, по
+умолчанию `auto` — семантика включается при заданном `AURA_EMBEDDINGS_URL`),
+`AURA_EMBEDDINGS_URL` (OpenAI-совместимый `POST /embeddings`),
+`AURA_EMBEDDINGS_MODEL` (по умолч. `text-embedding-3-small`),
+`AURA_EMBEDDINGS_API_KEY`, `AURA_EMBEDDINGS_TIMEOUT`. Без `AURA_EMBEDDINGS_URL`
+гибрид выключен — используется чистый BM25.
 
 ## Как выглядит A2A-ответ
 

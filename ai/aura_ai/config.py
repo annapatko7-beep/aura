@@ -69,6 +69,16 @@ class Settings:
         default_factory=lambda: _env("AURA_MEMORY_BACKEND", "file://./.aura_memory.json")
     )
 
+    # Гибридный RAG (этап 8): лексика (BM25) всегда + опциональная семантика.
+    # rag_mode: lexical | hybrid | auto (auto = hybrid, если задан эндпоинт эмбеддингов).
+    rag_mode: str = field(default_factory=lambda: _env("AURA_RAG_MODE", "auto"))
+    embeddings_url: str = field(default_factory=lambda: _env("AURA_EMBEDDINGS_URL", ""))
+    embeddings_model: str = field(
+        default_factory=lambda: _env("AURA_EMBEDDINGS_MODEL", "text-embedding-3-small")
+    )
+    embeddings_api_key: str = field(default_factory=lambda: _env("AURA_EMBEDDINGS_API_KEY", ""))
+    embeddings_timeout: float = field(default_factory=lambda: _env_float("AURA_EMBEDDINGS_TIMEOUT", "15"))
+
     # Инструменты: sandbox (детерминированные заглушки) или http (реальные API)
     tools_backend: str = field(default_factory=lambda: _env("AURA_TOOLS_BACKEND", "sandbox"))
     maps_api_url: str = field(default_factory=lambda: _env("AURA_MAPS_API_URL", ""))
@@ -119,6 +129,21 @@ class Settings:
         if url.endswith("/v1"):
             return url + "/audio/transcriptions"
         return url + "/v1/audio/transcriptions"
+
+    @property
+    def rag_is_hybrid(self) -> bool:
+        """True, если семантический поиск включён (иначе ранжирование лексическое).
+
+        ``lexical`` — только BM25; ``hybrid`` — требовать семантику;
+        ``auto`` (по умолчанию) — семантика включается при заданном
+        ``AURA_EMBEDDINGS_URL``. Без эндпоинта эмбеддингов гибрида нет,
+        но ранжирование продолжает работать на лексике (graceful degrade).
+        """
+        if self.rag_mode == "lexical":
+            return False
+        if self.rag_mode == "hybrid":
+            return True
+        return bool(self.embeddings_url)
 
 
 _settings: Settings | None = None

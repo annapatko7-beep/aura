@@ -278,24 +278,211 @@ def tokenize(text: str) -> List[str]:
     return [w for w in re.findall(r"[а-яёa-z0-9]{3,}", (text or "").lower()) if w not in STOPWORDS]
 
 
-def rank(query: str, entries: Iterable[MemoryEntry], limit: int = 8) -> List[MemoryEntry]:
-    """Простое релевантное ранжирование: TF-совпадения + вес записи."""
-    query_tokens = tokenize(query)
-    if not query_tokens:
-        return sorted(entries, key=lambda e: -e.weight)[:limit]
-    counts = Counter(stem(token) for token in query_tokens)
-    scored: List[tuple[float, MemoryEntry]] = []
-    for entry in entries:
-        tokens = tokenize(entry.text)
-        if not tokens:
+# ---------------------------------------------------------------------------
+#  Гибридный RAG (этап 8): лексика (BM25) всегда + опциональная семантика.
+#
+#  Лексический поиск (Okapi BM25) работает всегда и без внешних зависимостей.
+#  Семантический поиск включается, когда задан эндпоинт эмбеддингов
+#  (``EmbeddingClient``) и/или pgvector; он НЕ обязателен — без него ранжирование
+#  деградирует до чистой лексики (graceful degrade), а не падает.
+#  Итоговый порядок — Reciprocal Rank Fusion лексического и семантического списков.
+# ---------------------------------------------------------------------------
+
+BM25_K1 = 1.5
+BM25_B = 0.75
+
+
+def stem_tokens(text: str) -> List[str]:
+    """Токены фразы, приведённые к основам (для лексического совпадения)."""
+    return [stem(token) for token in tokenize(text)]
+
+
+def bm25_rank(
+    query: str,
+    entries: Iterable[MemoryEntry],
+    limit: int = 8,
+    k1: float = BM25_K1,
+    b: float = BM25_B,
+) -> List[tuple[float, MemoryEntry]]:
+    """Okapi BM25 по основам токенов + буст весом записи.
+
+    Возвращает пары ``(score, entry)``. Пустой запрос → сортировка по весу.
+    """
+    entries = list(entries)
+    query_stems = set(stem(token) for token in tokenize(query))
+    if not query_stems:
+        scored = [(round(e.weight, 4), e) for e in entries]
+        scored.sort(key=lambda item: (-item[0], item[1].text))
+        return scored[:limit]
+
+    docs = [(entry, stem_tokens(entry.text)) for entry in entries]
+    docs = [(entry, toks) for entry, toks in docs if toks]
+    if not docs:
+        return []
+
+    total = len(docs)
+    avgdl = sum(len(toks) for _, toks in docs) / total
+    df: Counter = Counter()
+    for _, toks in docs:
+        present = set(toks)
+        for qs in query_stems:
+            if qs in present:
+                df[qs] += 1
+    idf = {
+        qs: math.log(1 + (total - df.get(qs, 0) + 0.5) / (df.get(qs, 0) + 0.5))
+        for qs in query_stems
+    }
+
+    scored = []
+    for entry, toks in docs:
+        tf = Counter(toks)
+        score = 0.0
+        for qs in query_stems:
+            freq = tf.get(qs, 0)
+            if freq == 0:
+                continue
+            denom = freq + k1 * (1 - b + b * len(toks) / avgdl)
+            score += idf[qs] * (freq * (k1 + 1)) / denom
+        if score <= 0:
             continue
-        overlap = sum(counts[stem(t)] for t in tokens if stem(t) in counts)
-        if overlap == 0:
-            continue
-        tf = overlap / (1 + math.log(len(tokens)))
-        scored.append((round(tf * (0.5 + entry.weight), 4), entry))
+        # Вес записи усиливает релевантность (чаще всплывающие факты выше).
+        scored.append((round(score * (0.5 + entry.weight), 4), entry))
     scored.sort(key=lambda item: (-item[0], item[1].text))
-    return [entry for _, entry in scored[:limit]]
+    return scored[:limit]
+
+
+class EmbeddingClient:
+    """Клиент эндпоинта эмбеддингов (OpenAI-совместимый ``POST /embeddings``).
+
+    Необязателен: без ``url`` семантический поиск выключен, и ранжирование
+    остаётся лексическим. Любая ошибка сети/формата → ``None`` (деградация).
+    """
+
+    def __init__(self, url: str = "", model: str = "text-embedding-3-small",
+                 api_key: str = "", timeout: float = 15.0):
+        self.url = (url or "").rstrip("/")
+        self.model = model
+        self.api_key = api_key
+        self.timeout = timeout
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url)
+
+    def endpoint(self) -> str:
+        if self.url.endswith("/embeddings"):
+            return self.url
+        return self.url + "/embeddings"
+
+    def embed(self, texts: List[str]) -> Optional[List[List[float]]]:
+        if not self.enabled or not texts:
+            return None
+        import httpx  # ленивый импорт: без семантики httpx не нужен
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        try:
+            response = httpx.post(
+                self.endpoint(),
+                json={"model": self.model, "input": list(texts)},
+                headers=headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as exc:  # сеть/формат — деградируем до лексики
+            logger.warning("эмбеддинги недоступны (%s), использую лексический поиск", exc)
+            return None
+        items = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(items, list) or len(items) != len(texts):
+            return None
+        vectors = [item.get("embedding") for item in items if isinstance(item, dict)]
+        if len(vectors) != len(texts) or any(v is None for v in vectors):
+            return None
+        try:
+            return [[float(x) for x in vec] for vec in vectors]
+        except (TypeError, ValueError):
+            return None
+
+
+def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def vector_rank(
+    query: str,
+    entries: Iterable[MemoryEntry],
+    embed_client: Optional["EmbeddingClient"],
+    limit: int = 8,
+) -> Optional[List[tuple[float, MemoryEntry]]]:
+    """Семантическое ранжирование по косинусной близости эмбеддингов.
+
+    Возвращает ``None``, если клиент не задан/выключен или эмбеддинги
+    недоступны, — вызывающий код тогда остаётся на лексике.
+    """
+    entries = [e for e in entries if e.text.strip()]
+    if embed_client is None or not embed_client.enabled or not entries:
+        return None
+    texts = [query] + [e.text for e in entries]
+    vectors = embed_client.embed(texts)
+    if not vectors or len(vectors) != len(texts):
+        return None
+    query_vec = vectors[0]
+    scored = [
+        (round(cosine_similarity(query_vec, vec), 4), entry)
+        for entry, vec in zip(entries, vectors[1:])
+    ]
+    scored.sort(key=lambda item: (-item[0], item[1].text))
+    return scored[:limit]
+
+
+def reciprocal_rank_fusion(
+    rankings: Sequence[Sequence[tuple[float, MemoryEntry]]], k: int = 60
+) -> List[tuple[float, MemoryEntry]]:
+    """Reciprocal Rank Fusion: объединяет несколько ранжированных списков.
+
+    Позиция важнее абсолютного Scores, поэтому лексика и семантика с разными
+    шкалами корректно смешиваются. Ключ — нормализованный текст записи.
+    """
+    scores: Dict[str, float] = {}
+    by_key: Dict[str, MemoryEntry] = {}
+    for ranking in rankings:
+        for position, (_score, entry) in enumerate(ranking):
+            key = entry.text.strip().lower()
+            if not key:
+                continue
+            by_key[key] = entry
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k + position + 1)
+    fused = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [(round(score, 6), by_key[key]) for key, score in fused]
+
+
+def rank(
+    query: str,
+    entries: Iterable[MemoryEntry],
+    limit: int = 8,
+    embed_client: Optional[EmbeddingClient] = None,
+) -> List[MemoryEntry]:
+    """Гибридное ранжирование: BM25 (всегда) + семантика (если доступна).
+
+    Без ``embed_client`` (или когда эмбеддинги недоступны) это чистый BM25 —
+    поведение обратно совместимо с прежним лексическим ранжированием.
+    """
+    entries = list(entries)
+    pool = max(limit * 3, limit)
+    lexical = bm25_rank(query, entries, limit=pool)
+    if embed_client is not None and embed_client.enabled:
+        semantic = vector_rank(query, entries, embed_client, limit=pool)
+        if semantic:
+            fused = reciprocal_rank_fusion([lexical, semantic])
+            return [entry for _, entry in fused[:limit]]
+    return [entry for _, entry in lexical[:limit]]
 
 
 def summarize(entries: Sequence[MemoryEntry], limit: int = 5) -> str:
@@ -316,15 +503,20 @@ def user_key(context: AgentContext) -> str:
     return context.email or str(context.user_id)
 
 
-def load_context_memory(store: MemoryStore, context: AgentContext, limit: int = 20) -> List[MemoryEntry]:
+def load_context_memory(
+    store: MemoryStore,
+    context: AgentContext,
+    limit: int = 20,
+    embed_client: Optional[EmbeddingClient] = None,
+) -> List[MemoryEntry]:
     """Память из хранилища + память, присланная C++-сервером, без дублей.
 
-    Сначала идут записи, релевантные текущей фразе, затем — самые весомые из
-    остальных: агенту важно помнить и про «не люблю шумные места», даже если
-    в запросе об этом не сказано.
+    Сначала идут записи, релевантные текущей фразе (гибридный RAG), затем —
+    самые весомые из остальных: агенту важно помнить и про «не люблю шумные
+    места», даже если в запросе об этом не сказано.
     """
     merged = merge_entries(store.load(user_key(context)), context.memory)
-    relevant = rank(context.message, merged, limit=limit)
+    relevant = rank(context.message, merged, limit=limit, embed_client=embed_client)
     seen = {entry.text.lower() for entry in relevant}
     for entry in merged:
         if len(relevant) >= limit:

@@ -261,9 +261,11 @@ def memory_extract(request: MemoryExtractRequest) -> MemoryExtractResponse:
 
 @app.get("/v1/memory/{user_key}", dependencies=[Depends(require_token)])
 def memory_load(user_key: str, query: str = "") -> Dict[str, Any]:
-    entries = get_agent().store.load(user_key)
+    agent = get_agent()
+    entries = agent.store.load(user_key)
     if query:
-        entries = memory_module.rank(query, entries)
+        # Гибридный RAG: BM25 всегда + семантика, если настроены эмбеддинги.
+        entries = memory_module.rank(query, entries, embed_client=agent.embed_client)
     return {"user_key": user_key, "entries": memory_module.as_dicts(entries)}
 
 
