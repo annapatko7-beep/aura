@@ -1530,6 +1530,183 @@ TEST(ai_create_reminder_makes_task) {
     CHECK_EQ(fixture.server->runSchedulerTick(10), static_cast<std::size_t>(0));
 }
 
+// --------------------------------------------------- интеграции (этап 9)
+
+TEST(integrations_pkce_s256_known_vector) {
+    // RFC 7636, Приложение B: эталонная пара verifier → challenge.
+    const std::string verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    const std::string challenge = aura::crypto::base64UrlEncode(aura::crypto::sha256(verifier));
+    CHECK_EQ(challenge, std::string("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"));
+}
+
+TEST(integrations_begin_and_state_rules) {
+    ::setenv("AURA_GOOGLE_CLIENT_ID", "test-client-id", 1);
+    ::setenv("AURA_GOOGLE_CLIENT_SECRET", "test-client-secret", 1);
+    ::setenv("AURA_GOOGLE_TOKEN_URL", "http://127.0.0.1:1/token", 1);  // недоступен
+    Fixture fixture;
+    auto anna = fixture.makeSession("anna");
+    auto oleg = fixture.makeSession("oleg");
+    fixture.registerUser(anna, "anna@example.com", "Анна");
+    fixture.registerUser(oleg, "oleg@example.com", "Олег");
+
+    Json beginPayload = Json::object();
+    beginPayload.set("provider", Json("google_calendar"));
+    beginPayload.set("redirect_uri", Json("http://127.0.0.1:9999/callback"));
+    const Json begin = fixture.call(anna, "integrations.begin", beginPayload);
+    CHECK_EQ(begin.getString("type"), std::string("ok"));
+    const Json beginData = begin.get("payload");
+    const std::string state = beginData.getString("state");
+    CHECK(!state.empty());
+    const std::string url = beginData.getString("authorize_url");
+    CHECK(url.find("code_challenge_method=S256") != std::string::npos);
+    CHECK(url.find("code_challenge=") != std::string::npos);
+    CHECK(url.find("state=" + state) != std::string::npos);
+    CHECK(url.find("calendar.events.readonly") != std::string::npos);
+
+    // Неизвестный провайдер отклоняется.
+    Json badProvider = beginPayload;
+    badProvider.set("provider", Json("yandex_disk"));
+    CHECK_EQ(fixture.call(anna, "integrations.begin", badProvider).getString("code"),
+             std::string("bad_request"));
+
+    Json callback = Json::object();
+    callback.set("provider", Json("google_calendar"));
+    callback.set("code", Json("any-code"));
+    callback.set("state", Json(state));
+
+    // Чужой state недействителен.
+    CHECK_EQ(fixture.call(oleg, "integrations.callback", callback).getString("code"),
+             std::string("bad_request"));
+
+    // Несовпадение провайдера недействительно.
+    Json wrongProvider = callback;
+    wrongProvider.set("provider", Json("google_gmail"));
+    CHECK_EQ(fixture.call(anna, "integrations.callback", wrongProvider).getString("code"),
+             std::string("bad_request"));
+
+    // Эндаунт токенов недоступен → upstream_error, state сгорает (одноразовый).
+    CHECK_EQ(fixture.call(anna, "integrations.callback", callback).getString("code"),
+             std::string("upstream_error"));
+    CHECK_EQ(fixture.call(anna, "integrations.callback", callback).getString("code"),
+             std::string("bad_request"));
+
+    ::unsetenv("AURA_GOOGLE_CLIENT_ID");
+    ::unsetenv("AURA_GOOGLE_CLIENT_SECRET");
+    ::unsetenv("AURA_GOOGLE_TOKEN_URL");
+}
+
+TEST(integrations_state_expires) {
+    ::setenv("AURA_GOOGLE_CLIENT_ID", "test-client-id", 1);
+    ::setenv("AURA_GOOGLE_CLIENT_SECRET", "test-client-secret", 1);
+    ::setenv("AURA_OAUTH_STATE_TTL", "-5", 1);  // мгновенно истёкший state
+    Fixture fixture;
+    auto anna = fixture.makeSession("anna");
+    fixture.registerUser(anna, "anna@example.com", "Анна");
+
+    Json beginPayload = Json::object();
+    beginPayload.set("provider", Json("google_gmail"));
+    beginPayload.set("redirect_uri", Json("http://127.0.0.1:9999/callback"));
+    const Json begin = fixture.call(anna, "integrations.begin", beginPayload);
+    CHECK_EQ(begin.getString("type"), std::string("ok"));
+
+    Json callback = Json::object();
+    callback.set("provider", Json("google_gmail"));
+    callback.set("code", Json("any-code"));
+    callback.set("state", Json(begin.get("payload").getString("state")));
+    const Json expired = fixture.call(anna, "integrations.callback", callback);
+    CHECK_EQ(expired.getString("code"), std::string("bad_request"));
+
+    ::unsetenv("AURA_GOOGLE_CLIENT_ID");
+    ::unsetenv("AURA_GOOGLE_CLIENT_SECRET");
+    ::unsetenv("AURA_OAUTH_STATE_TTL");
+}
+
+TEST(integrations_database_roundtrip) {
+    Fixture fixture;
+    auto& db = fixture.server->database().db();
+
+    aura::IntegrationConnectionRecord record;
+    record.userId = 7;
+    record.provider = "google_calendar";
+    record.account = "anna@gmail.com";
+    record.scope = "https://www.googleapis.com/auth/calendar.events.readonly";
+    record.tokenEncrypted = "cipher-blob";
+    record.status = "active";
+    long long id = 0;
+    CHECK(db.upsertIntegrationConnection(record, id).ok);
+    CHECK(id > 0);
+
+    const auto found = db.findIntegrationConnection(7, "google_calendar");
+    CHECK(found.has_value());
+    CHECK_EQ(found->account, std::string("anna@gmail.com"));
+    CHECK_EQ(found->tokenEncrypted, std::string("cipher-blob"));
+
+    // Upsert по (user, provider) обновляет существующую запись.
+    record.tokenEncrypted = "cipher-blob-2";
+    record.account = "anna2@gmail.com";
+    long long sameId = 0;
+    CHECK(db.upsertIntegrationConnection(record, sameId).ok);
+    CHECK_EQ(sameId, id);
+    const auto updated = db.findIntegrationConnection(7, "google_calendar");
+    CHECK_EQ(updated->tokenEncrypted, std::string("cipher-blob-2"));
+    CHECK_EQ(db.listIntegrationConnections(7).size(), static_cast<std::size_t>(1));
+
+    // Наружу токен не отдаётся.
+    const Json json = updated->toJson();
+    CHECK(!json.contains("token_encrypted"));
+    CHECK_EQ(json.getString("provider"), std::string("google_calendar"));
+    CHECK_EQ(updated->toJson(true).getString("token_encrypted"), std::string("cipher-blob-2"));
+
+    CHECK(db.updateIntegrationToken(id, "cipher-3", "expired", "токен истёк").ok);
+    CHECK_EQ(db.findIntegrationConnection(7, "google_calendar")->status, std::string("expired"));
+    CHECK(db.touchIntegrationUsed(id).ok);
+    CHECK(!db.findIntegrationConnection(7, "google_calendar")->lastUsedAt.empty());
+    CHECK(db.deleteIntegrationConnection(id).ok);
+    CHECK(!db.findIntegrationConnection(7, "google_calendar").has_value());
+    CHECK(!db.deleteIntegrationConnection(id).ok);  // уже удалено
+
+    // Одноразовые OAuth-состояния.
+    aura::OauthStateRecord state;
+    state.state = "st-1";
+    state.userId = 7;
+    state.provider = "google_gmail";
+    state.verifier = "verifier-1";
+    state.redirectUri = "http://127.0.0.1:9999/cb";
+    state.expiresAt = "2030-01-01T00:00:00Z";
+    CHECK(db.createOauthState(state).ok);
+    const auto loaded = db.findOauthState("st-1");
+    CHECK(loaded.has_value());
+    CHECK_EQ(loaded->verifier, std::string("verifier-1"));
+    CHECK(loaded->usedAt.empty());
+    CHECK(db.useOauthState("st-1").ok);
+    CHECK(!db.findOauthState("st-1")->usedAt.empty());
+    CHECK(!db.useOauthState("missing").ok);
+    CHECK(!db.findOauthState("missing").has_value());
+}
+
+TEST(integrations_list_hides_secret) {
+    Fixture fixture;
+    auto anna = fixture.makeSession("anna");
+    fixture.registerUser(anna, "anna@example.com", "Анна");
+
+    aura::IntegrationConnectionRecord record;
+    record.userId = anna->userId();
+    record.provider = "google_gmail";
+    record.account = "anna@gmail.com";
+    record.tokenEncrypted = "super-secret-cipher";
+    long long id = 0;
+    CHECK(fixture.server->database().db().upsertIntegrationConnection(record, id).ok);
+
+    const Json listed = fixture.call(anna, "integrations.list");
+    CHECK_EQ(listed.getString("type"), std::string("ok"));
+    const std::string dump = listed.dump();
+    CHECK(dump.find("super-secret-cipher") == std::string::npos);
+    CHECK(dump.find("google_gmail") != std::string::npos);
+    const Json connections = listed.get("payload").get("connections");
+    CHECK_EQ(connections.size(), static_cast<std::size_t>(1));
+    CHECK_EQ(connections.items()[0].getString("account"), std::string("anna@gmail.com"));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {

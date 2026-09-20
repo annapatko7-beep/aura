@@ -33,6 +33,18 @@ struct Config {
     int pingIntervalSec = 25;                            // AURA_PING_INTERVAL
     int socketTimeoutSec = 120;                          // AURA_SOCKET_TIMEOUT
     int schedulerIntervalMs = 30000;                     // AURA_SCHEDULER_INTERVAL_MS (0 = выключен)
+
+    // Интеграции (этап 9): Google OAuth 2.0 + PKCE. URL по умолчанию —
+    // реальные эндпоинты Google (прод идёт за TLS-прокси); e2e подменяет
+    // их локальным mock-сервером.
+    std::string googleClientId;                          // AURA_GOOGLE_CLIENT_ID
+    std::string googleClientSecret;                      // AURA_GOOGLE_CLIENT_SECRET
+    std::string googleAuthUrl = "https://accounts.google.com/o/oauth2/v2/auth";  // AURA_GOOGLE_AUTH_URL
+    std::string googleTokenUrl = "https://oauth2.googleapis.com/token";          // AURA_GOOGLE_TOKEN_URL
+    std::string googleRevokeUrl = "https://oauth2.googleapis.com/revoke";        // AURA_GOOGLE_REVOKE_URL
+    std::string googleCalendarUrl = "https://www.googleapis.com/calendar/v3";    // AURA_GOOGLE_CALENDAR_URL
+    std::string googleGmailUrl = "https://gmail.googleapis.com/gmail/v1";        // AURA_GOOGLE_GMAIL_URL
+    int oauthStateTtlSec = 600;                          // AURA_OAUTH_STATE_TTL — жизнь одноразового state
     std::string logLevel = "info";                       // AURA_LOG_LEVEL
 
     static Config fromEnv();

@@ -212,6 +212,36 @@ struct TaskRecord {
     Json toJson() const;
 };
 
+// Подключение внешнего сервиса (этап 9). Токен хранится зашифрованным
+// (AES-256-GCM); наружу record отдаётся без tokenEncrypted (includeSecret).
+// status: active | expired | revoked | error.
+struct IntegrationConnectionRecord {
+    long long id = 0;
+    long long userId = 0;
+    std::string provider;  // google_calendar | google_gmail
+    std::string account;
+    std::string scope;
+    std::string tokenEncrypted;
+    std::string status = "active";
+    std::string lastError;
+    std::string createdAt;
+    std::string lastUsedAt;
+
+    Json toJson(bool includeSecret = false) const;
+};
+
+// Одноразовое состояние OAuth 2.0 + PKCE (этап 9).
+struct OauthStateRecord {
+    std::string state;
+    long long userId = 0;
+    std::string provider;
+    std::string verifier;      // PKCE code_verifier
+    std::string redirectUri;
+    std::string createdAt;
+    std::string expiresAt;
+    std::string usedAt;
+};
+
 struct DatabaseError {
     bool ok = true;
     std::string message;
@@ -355,6 +385,24 @@ public:
     // Планировщик: задачи с remind_at <= now, статус pending, ещё не напомненные.
     virtual std::vector<TaskRecord> listDueTasks(int limit) = 0;
     virtual DatabaseError markTaskReminded(long long id) = 0;
+
+    // IntegrationConnections (этап 9): одна запись на (user, provider).
+    virtual DatabaseError upsertIntegrationConnection(const IntegrationConnectionRecord& record,
+                                                      long long& outId) = 0;
+    virtual std::optional<IntegrationConnectionRecord> findIntegrationConnection(
+        long long userId, const std::string& provider) = 0;
+    virtual std::vector<IntegrationConnectionRecord> listIntegrationConnections(long long userId) = 0;
+    virtual DatabaseError updateIntegrationToken(long long id,
+                                                 const std::string& tokenEncrypted,
+                                                 const std::string& status,
+                                                 const std::string& lastError) = 0;
+    virtual DatabaseError touchIntegrationUsed(long long id) = 0;
+    virtual DatabaseError deleteIntegrationConnection(long long id) = 0;
+
+    // IntegrationOauthStates (этап 9): одноразовые state + PKCE verifier.
+    virtual DatabaseError createOauthState(const OauthStateRecord& record) = 0;
+    virtual std::optional<OauthStateRecord> findOauthState(const std::string& state) = 0;
+    virtual DatabaseError useOauthState(const std::string& state) = 0;
 };
 
 std::unique_ptr<IDatabase> makePostgresDatabase(const std::string& url);

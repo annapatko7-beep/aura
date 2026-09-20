@@ -1,6 +1,7 @@
 -- ============================================================================
---  Aura — миграция AI-возможностей (этап 8)
---  Ядро безопасности: разрешения на инструменты + барьер подтверждения.
+--  Aura — миграция AI-возможностей (этапы 8–9)
+--  Этап 8: разрешения на инструменты, барьер подтверждения, задачи.
+--  Этап 9: интеграции (Google OAuth, токены зашифрованы) + OAuth-состояния.
 --  Применение к существующей БД:
 --    psql "$AURA_DATABASE_URL" -f schema/migrations/2026_09_20_ai_features.sql
 --  Для свежей БД достаточно schema/schema.sql — миграция идемпотентна.
@@ -57,5 +58,37 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS tasks_user_idx ON tasks (user_id, status, id DESC);
 CREATE INDEX IF NOT EXISTS tasks_due_idx ON tasks (remind_at)
     WHERE status = 'pending' AND reminded_at IS NULL;
+
+-- Подключённые внешние сервисы (этап 9): токены только зашифрованными.
+CREATE TABLE IF NOT EXISTS integration_connections (
+    id              BIGSERIAL     PRIMARY KEY,
+    user_id         BIGINT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider        TEXT          NOT NULL,
+    account         TEXT          NOT NULL DEFAULT '',
+    scope           TEXT          NOT NULL DEFAULT '',
+    token_encrypted TEXT          NOT NULL,
+    status          TEXT          NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'expired', 'revoked', 'error')),
+    last_error      TEXT          NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    last_used_at    TIMESTAMPTZ,
+    UNIQUE (user_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS integration_connections_user_idx ON integration_connections (user_id);
+
+-- Одноразовые состояния OAuth 2.0 + PKCE.
+CREATE TABLE IF NOT EXISTS integration_oauth_states (
+    state        TEXT          PRIMARY KEY,
+    user_id      BIGINT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider     TEXT          NOT NULL,
+    verifier     TEXT          NOT NULL,
+    redirect_uri TEXT          NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    expires_at   TIMESTAMPTZ   NOT NULL,
+    used_at      TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS integration_oauth_states_user_idx ON integration_oauth_states (user_id);
 
 COMMIT;

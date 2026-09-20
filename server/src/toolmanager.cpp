@@ -11,6 +11,7 @@
 #include "aura/crypto.h"
 #include "aura/log.h"
 #include "aura/net.h"
+#include "integrationmanager.h"
 
 namespace aura {
 
@@ -71,8 +72,9 @@ double scoreCafe(const Cafe& cafe, const std::vector<std::string>& diet, double 
 
 }  // namespace
 
-ToolManager::ToolManager(const Config& config, DatabaseManager& database, ChatManager& chats)
-    : config_(config), database_(database), chats_(chats) {}
+ToolManager::ToolManager(const Config& config, DatabaseManager& database, ChatManager& chats,
+                         IntegrationManager* integrations)
+    : config_(config), database_(database), chats_(chats), integrations_(integrations) {}
 
 bool ToolManager::isKnownTool(const std::string& tool) {
     static const std::vector<std::string> kTools = {
@@ -233,9 +235,50 @@ ToolManager::Result ToolManager::sendEmail(long long userId, const Json& args) {
         result.error = "нужен корректный адрес получателя";
         return result;
     }
+    const std::string subject = args.getString("subject", "Без темы");
+
+    // Этап 9: если подключён Gmail — настоящая отправка через Gmail API.
+    if (integrations_) {
+        std::string tokenError;
+        const std::string token = integrations_->accessToken(userId, "google_gmail", tokenError);
+        if (!token.empty()) {
+            // RFC 2822: заголовки, пустая строка, текст; raw — в base64url.
+            const std::string message = "To: " + to + "\r\n" +
+                                        "Subject: " + subject + "\r\n" +
+                                        "MIME-Version: 1.0\r\n" +
+                                        "Content-Type: text/plain; charset=\"UTF-8\"\r\n" +
+                                        "\r\n" + args.getString("body");
+            Json gmailPayload = Json::object();
+            gmailPayload.set("raw", Json(crypto::base64UrlEncode(message)));
+            std::string error;
+            const auto response = net::httpRequest(
+                "POST", integrations_->gmailUrl() + "/users/me/messages/send",
+                {{"Authorization", "Bearer " + token},
+                 {"Content-Type", "application/json; charset=UTF-8"}},
+                gmailPayload.dump(), config_.aiTimeoutMs, error);
+            if (!error.empty()) {
+                result.error = "Gmail недоступен: " + error;
+                return result;
+            }
+            if (!response.ok()) {
+                result.error = "Gmail отклонил письмо: HTTP " + std::to_string(response.status);
+                return result;
+            }
+            const Json sent = Json::parse(response.body, nullptr);
+            result.ok = true;
+            result.data.set("provider", Json("google_gmail"));
+            result.data.set("message_id", Json(sent.getString("id")));
+            result.data.set("thread_id", Json(sent.getString("threadId")));
+            result.data.set("sent_at", Json(isoNow()));
+            return result;
+        }
+        AURA_LOG(log::Level::Debug, "tools")
+            << "Gmail не подключён (" << tokenError << ") — отправляю через почтовый API";
+    }
+
     Json payload = Json::object();
     payload.set("to", Json(to));
-    payload.set("subject", Json(args.getString("subject", "Без темы")));
+    payload.set("subject", Json(subject));
     payload.set("body", Json(args.getString("body")));
     payload.set("from_user", Json(userId));
 
@@ -333,6 +376,44 @@ ToolManager::Result ToolManager::checkCalendar(long long userId, const Json& arg
     Result result;
     result.ok = true;
     Json busy = Json::array();
+
+    // Этап 9: при подключённом Google Календаре — реальные события через API.
+    if (integrations_) {
+        std::string tokenError;
+        const std::string token =
+            integrations_->accessToken(userId, "google_calendar", tokenError);
+        if (!token.empty()) {
+            std::string error;
+            const auto response = net::httpRequest(
+                "GET",
+                integrations_->calendarUrl() +
+                    "/calendars/primary/events?timeMin=" + isoNow() +
+                    "&maxResults=10&singleEvents=true&orderBy=startTime",
+                {{"Authorization", "Bearer " + token}, {"Accept", "application/json"}},
+                "", config_.aiTimeoutMs, error);
+            if (error.empty() && response.ok()) {
+                const Json body = Json::parse(response.body, nullptr);
+                const Json items = body.get("items");
+                for (const auto& item : items.items()) {
+                    Json event = Json::object();
+                    event.set("title", Json(item.getString("summary", "(без названия)")));
+                    const Json start = item.get("start");
+                    std::string when = start.getString("dateTime");
+                    if (when.empty()) when = start.getString("date");
+                    event.set("start", Json(when));
+                    busy.push(event);
+                }
+                result.data.set("window", args.get("window"));
+                result.data.set("busy", busy);
+                result.data.set("source", Json("google_calendar"));
+                return result;
+            }
+            AURA_LOG(log::Level::Warn, "tools")
+                << "Google Calendar недоступен (" << (error.empty() ? response.body : error)
+                << ") — показываю память";
+        }
+    }
+
     for (const auto& record : database_.db().listMemory(userId, 100)) {
         if (record.kind != "schedule") continue;
         Json event = Json::object();
@@ -342,6 +423,7 @@ ToolManager::Result ToolManager::checkCalendar(long long userId, const Json& arg
     }
     result.data.set("window", args.get("window"));
     result.data.set("busy", busy);
+    result.data.set("source", Json("memory"));
     return result;
 }
 

@@ -272,6 +272,43 @@ CREATE INDEX IF NOT EXISTS tasks_user_idx ON tasks (user_id, status, id DESC);
 CREATE INDEX IF NOT EXISTS tasks_due_idx ON tasks (remind_at)
     WHERE status = 'pending' AND reminded_at IS NULL;
 
+-- ---------------------------------------------- IntegrationConnections ----
+-- Подключённые внешние сервисы (этап 9): Google Calendar, Gmail.
+-- Токены хранятся ТОЛЬКО зашифрованными (AES-256-GCM, ключ — env AURA_2FA_KEY),
+-- наружу (в клиентах/логах) не отдаются никогда.
+CREATE TABLE IF NOT EXISTS integration_connections (
+    id              BIGSERIAL     PRIMARY KEY,
+    user_id         BIGINT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider        TEXT          NOT NULL,           -- google_calendar | google_gmail
+    account         TEXT          NOT NULL DEFAULT '', -- email аккаунта (для показа)
+    scope           TEXT          NOT NULL DEFAULT '',
+    token_encrypted TEXT          NOT NULL,            -- AES-256-GCM {access,refresh,expires_at}
+    status          TEXT          NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'expired', 'revoked', 'error')),
+    last_error      TEXT          NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    last_used_at    TIMESTAMPTZ,
+    UNIQUE (user_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS integration_connections_user_idx ON integration_connections (user_id);
+
+-- ----------------------------------------------- IntegrationOauthStates ----
+-- Одноразовые состояния OAuth 2.0 + PKCE: state защищает от CSRF,
+-- code_verifier нужен для обмена кода на токены. Срок жизни — минуты.
+CREATE TABLE IF NOT EXISTS integration_oauth_states (
+    state        TEXT          PRIMARY KEY,
+    user_id      BIGINT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider     TEXT          NOT NULL,
+    verifier     TEXT          NOT NULL,              -- PKCE code_verifier
+    redirect_uri TEXT          NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    expires_at   TIMESTAMPTZ   NOT NULL,
+    used_at      TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS integration_oauth_states_user_idx ON integration_oauth_states (user_id);
+
 -- --------------------------------------------------------------- Триггер ---
 CREATE OR REPLACE FUNCTION aura_touch_updated_at() RETURNS trigger AS $$
 BEGIN

@@ -1077,7 +1077,170 @@ public:
         return DatabaseError::failure("задача не найдена");
     }
 
+    // ------------------------------------------- integration_connections
+    DatabaseError upsertIntegrationConnection(const IntegrationConnectionRecord& record,
+                                              long long& outId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("integration_connections")) {
+            if (entry.getInt("user_id") == record.userId && entry.getString("provider") == record.provider) {
+                entry.set("account", Json(record.account));
+                entry.set("scope", Json(record.scope));
+                entry.set("token_encrypted", Json(record.tokenEncrypted));
+                entry.set("status", Json(record.status.empty() ? std::string("active") : record.status));
+                entry.set("last_error", Json(record.lastError));
+                flush();
+                outId = entry.getInt("id");
+                return DatabaseError::success();
+            }
+        }
+        const long long id = nextId("integration_connections");
+        Json entry = Json::object();
+        entry.set("id", Json(id));
+        entry.set("user_id", Json(record.userId));
+        entry.set("provider", Json(record.provider));
+        entry.set("account", Json(record.account));
+        entry.set("scope", Json(record.scope));
+        entry.set("token_encrypted", Json(record.tokenEncrypted));
+        entry.set("status", Json(record.status.empty() ? std::string("active") : record.status));
+        entry.set("last_error", Json(record.lastError));
+        entry.set("created_at", Json(isoNow()));
+        entry.set("last_used_at", Json(record.lastUsedAt));
+        table("integration_connections").push(entry);
+        flush();
+        outId = id;
+        return DatabaseError::success();
+    }
+
+    std::optional<IntegrationConnectionRecord> findIntegrationConnection(
+        long long userId, const std::string& provider) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& entry : table("integration_connections").items()) {
+            if (entry.getInt("user_id") == userId && entry.getString("provider") == provider) {
+                return toIntegration(entry);
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::vector<IntegrationConnectionRecord> listIntegrationConnections(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<IntegrationConnectionRecord> result;
+        for (const auto& entry : table("integration_connections").items()) {
+            if (entry.getInt("user_id") != userId) continue;
+            result.push_back(toIntegration(entry));
+        }
+        std::sort(result.begin(), result.end(),
+                  [](const IntegrationConnectionRecord& a, const IntegrationConnectionRecord& b) {
+                      return a.provider < b.provider;
+                  });
+        return result;
+    }
+
+    DatabaseError updateIntegrationToken(long long id,
+                                         const std::string& tokenEncrypted,
+                                         const std::string& status,
+                                         const std::string& lastError) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("integration_connections")) {
+            if (entry.getInt("id") != id) continue;
+            entry.set("token_encrypted", Json(tokenEncrypted));
+            entry.set("status", Json(status));
+            entry.set("last_error", Json(lastError));
+            flush();
+            return DatabaseError::success();
+        }
+        return DatabaseError::failure("подключение не найдено");
+    }
+
+    DatabaseError touchIntegrationUsed(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("integration_connections")) {
+            if (entry.getInt("id") != id) continue;
+            entry.set("last_used_at", Json(isoNow()));
+            flush();
+            return DatabaseError::success();
+        }
+        return DatabaseError::failure("подключение не найдено");
+    }
+
+    DatabaseError deleteIntegrationConnection(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Json::Array& entries = mutableTable("integration_connections");
+        for (auto it = entries.begin(); it != entries.end(); ++it) {
+            if (it->getInt("id") == id) {
+                entries.erase(it);
+                flush();
+                return DatabaseError::success();
+            }
+        }
+        return DatabaseError::failure("подключение не найдено");
+    }
+
+    // --------------------------------------------- integration_oauth_states
+    DatabaseError createOauthState(const OauthStateRecord& record) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Json entry = Json::object();
+        entry.set("state", Json(record.state));
+        entry.set("user_id", Json(record.userId));
+        entry.set("provider", Json(record.provider));
+        entry.set("verifier", Json(record.verifier));
+        entry.set("redirect_uri", Json(record.redirectUri));
+        entry.set("created_at", Json(isoNow()));
+        entry.set("expires_at", Json(record.expiresAt));
+        entry.set("used_at", Json(record.usedAt));
+        table("integration_oauth_states").push(entry);
+        flush();
+        return DatabaseError::success();
+    }
+
+    std::optional<OauthStateRecord> findOauthState(const std::string& state) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& entry : table("integration_oauth_states").items()) {
+            if (entry.getString("state") == state) return toOauthState(entry);
+        }
+        return std::nullopt;
+    }
+
+    DatabaseError useOauthState(const std::string& state) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& entry : mutableTable("integration_oauth_states")) {
+            if (entry.getString("state") != state) continue;
+            entry.set("used_at", Json(isoNow()));
+            flush();
+            return DatabaseError::success();
+        }
+        return DatabaseError::failure("состояние OAuth не найдено");
+    }
+
 private:
+    IntegrationConnectionRecord toIntegration(const Json& entry) const {
+        IntegrationConnectionRecord record;
+        record.id = entry.getInt("id");
+        record.userId = entry.getInt("user_id");
+        record.provider = entry.getString("provider");
+        record.account = entry.getString("account");
+        record.scope = entry.getString("scope");
+        record.tokenEncrypted = entry.getString("token_encrypted");
+        record.status = entry.getString("status", "active");
+        record.lastError = entry.getString("last_error");
+        record.createdAt = entry.getString("created_at");
+        record.lastUsedAt = entry.getString("last_used_at");
+        return record;
+    }
+
+    OauthStateRecord toOauthState(const Json& entry) const {
+        OauthStateRecord record;
+        record.state = entry.getString("state");
+        record.userId = entry.getInt("user_id");
+        record.provider = entry.getString("provider");
+        record.verifier = entry.getString("verifier");
+        record.redirectUri = entry.getString("redirect_uri");
+        record.createdAt = entry.getString("created_at");
+        record.expiresAt = entry.getString("expires_at");
+        record.usedAt = entry.getString("used_at");
+        return record;
+    }
+
     TaskRecord toTask(const Json& entry) const {
         TaskRecord record;
         record.id = entry.getInt("id");

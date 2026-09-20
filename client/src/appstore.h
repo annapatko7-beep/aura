@@ -15,6 +15,7 @@
 QT_BEGIN_NAMESPACE
 class QAudioSource;
 class QIODevice;
+class QTcpServer;
 class QTextToSpeech;
 QT_END_NAMESPACE
 
@@ -74,6 +75,10 @@ class AppStore : public QObject {
     Q_PROPERTY(QVariantList toolPermissions READ toolPermissions NOTIFY toolPermissionsChanged)
     Q_PROPERTY(QVariantList confirmations READ confirmations NOTIFY confirmationsChanged)
     Q_PROPERTY(QVariantList tasks READ tasks NOTIFY tasksChanged)
+    // Этап 9: интеграции с внешними сервисами (Google Календарь, Gmail).
+    Q_PROPERTY(QVariantList integrationProviders READ integrationProviders NOTIFY integrationsChanged)
+    Q_PROPERTY(QVariantList integrations READ integrations NOTIFY integrationsChanged)
+    Q_PROPERTY(QString integrationUrl READ integrationUrl NOTIFY integrationUrlChanged)
 
 public:
     explicit AppStore(QObject* parent = nullptr);
@@ -129,6 +134,10 @@ public:
     QVariantList toolPermissions() const { return toolPermissions_; }
     QVariantList confirmations() const { return confirmations_; }
     QVariantList tasks() const { return tasks_; }
+    // Этап 9
+    QVariantList integrationProviders() const { return integrationProviders_; }
+    QVariantList integrations() const { return integrations_; }
+    QString integrationUrl() const { return integrationUrl_; }
 
 public slots:
     void login(const QString& email, const QString& password);
@@ -189,6 +198,13 @@ public slots:
     void completeTask(qint64 taskId);
     void cancelTask(qint64 taskId);
     void deleteTask(qint64 taskId);
+    // Этап 9: интеграции (Google OAuth: системный браузер + loopback-редирект).
+    void loadIntegrations();
+    void beginIntegration(const QString& provider);   // открыть consent-экран Google
+    void completeIntegration(const QString& provider, const QString& code,
+                             const QString& state);   // обмен code на токены
+    void revokeIntegration(qint64 connectionId);      // отозвать доступ
+    void syncIntegration(qint64 connectionId);        // синхронизировать сейчас
 
 signals:
     void connectedChanged();
@@ -226,6 +242,9 @@ signals:
     void toolPermissionsChanged();
     void confirmationsChanged();
     void tasksChanged();
+    // Этап 9: интеграции
+    void integrationsChanged();
+    void integrationUrlChanged();
 
 private:
     void handleEvent(const QString& name, const QJsonObject& payload);
@@ -246,6 +265,9 @@ private:
     void stopCaptureAndTranscribe();    // останавливает запись и шлёт на сервер
     void onAudioReady();                // читает готовые байты PCM + уровень
     static QByteArray wrapWav(const QByteArray& pcm, int sampleRate, int channels, int bitsPerSample);
+    // Интеграции (этап 9) — loopback HTTP-сервер ловит OAuth-редирект Google.
+    bool ensureRedirectServer();        // поднимает 127.0.0.1:<случайный порт>
+    void handleRedirectRequest();       // GET /callback?code&state → completeIntegration
     // Озвучка (TTS) — платформенный синтез.
     void initTts();                     // создаёт QTextToSpeech, читает настройки
     void applyTtsSettings();            // применяет voice/rate/volume к синтезатору
@@ -310,6 +332,12 @@ private:
     QVariantList toolPermissions_;    // каталог инструментов с эффективным mode
     QVariantList confirmations_;      // отложенные действия (status=pending)
     QVariantList tasks_;              // задачи пользователя
+    // Этап 9: интеграции с внешними сервисами
+    QVariantList integrationProviders_;  // каталог провайдеров с сервера
+    QVariantList integrations_;          // активные подключения пользователя
+    QString integrationUrl_;             // последняя ссылка на consent-экран
+    QString pendingProvider_;            // провайдер текущего OAuth-потока
+    QTcpServer* redirectServer_ = nullptr;  // 127.0.0.1:<порт>/callback
 };
 
 }  // namespace aura

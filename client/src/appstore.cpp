@@ -7,6 +7,15 @@
 #include <QUuid>
 #include <QVariant>
 
+// Интеграции (этап 9): системный браузер для consent-экрана Google и
+// loopback HTTP-сервер, который ловит OAuth-редирект.
+#include <QDesktopServices>
+#include <QHostAddress>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QUrl>
+#include <QUrlQuery>
+
 // Голосовой ввод (STT) и озвучка (TTS): платформенные модули Qt.
 // В QML их нет — вся работа с микрофоном и синтезом речи живёт здесь, в C++,
 // а QML обращается только к свойствам/сигналам/слотам AppStore.
@@ -169,6 +178,7 @@ void AppStore::applyAuth(const QJsonObject& payload) {
     loadPermissions();
     loadConfirmations();
     loadTasks();
+    loadIntegrations();  // этап 9
     setStatus(QStringLiteral("Добро пожаловать, %1").arg(userName_));
 }
 
@@ -1292,6 +1302,161 @@ void AppStore::deleteTask(qint64 taskId) {
                                  return;
                              }
                              loadTasks();
+                         });
+}
+
+// ------------------------------------------------------- интеграции (этап 9)
+
+void AppStore::loadIntegrations() {
+    client_->sendRequest(QStringLiteral("integrations.list"), {},
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             const QJsonObject payload =
+                                 response.value(QStringLiteral("payload")).toObject();
+                             integrationProviders_ = payload.value(QStringLiteral("providers"))
+                                                         .toArray().toVariantList();
+                             integrations_ = payload.value(QStringLiteral("connections"))
+                                                 .toArray().toVariantList();
+                             emit integrationsChanged();
+                         });
+}
+
+bool AppStore::ensureRedirectServer() {
+    if (redirectServer_ && redirectServer_->isListening()) return true;
+    if (!redirectServer_) {
+        redirectServer_ = new QTcpServer(this);
+        connect(redirectServer_, &QTcpServer::newConnection,
+                this, &AppStore::handleRedirectRequest);
+    }
+    if (!redirectServer_->listen(QHostAddress::LocalHost, 0)) {
+        setError(QStringLiteral("Не удалось открыть локальный порт для OAuth-редиректа"));
+        return false;
+    }
+    return true;
+}
+
+void AppStore::beginIntegration(const QString& provider) {
+    if (!ensureRedirectServer()) return;
+    const QString redirectUri = QStringLiteral("http://127.0.0.1:%1/callback")
+                                    .arg(redirectServer_->serverPort());
+    QJsonObject payload;
+    payload.insert(QStringLiteral("provider"), provider);
+    payload.insert(QStringLiteral("redirect_uri"), redirectUri);
+    client_->sendRequest(QStringLiteral("integrations.begin"), payload,
+                         [this, provider](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             integrationUrl_ = response.value(QStringLiteral("payload"))
+                                                   .toObject()
+                                                   .value(QStringLiteral("authorize_url"))
+                                                   .toString();
+                             pendingProvider_ = provider;
+                             emit integrationUrlChanged();
+                             if (QDesktopServices::openUrl(QUrl(integrationUrl_))) {
+                                 setStatus(QStringLiteral("Открыт браузер: разрешите Ауре доступ"));
+                             } else {
+                                 setError(QStringLiteral("Не удалось открыть браузер. Ссылка: ") +
+                                          integrationUrl_);
+                             }
+                         });
+}
+
+void AppStore::handleRedirectRequest() {
+    while (redirectServer_ && redirectServer_->hasPendingConnections()) {
+        QTcpSocket* socket = redirectServer_->nextPendingConnection();
+        if (!socket) continue;
+        socket->waitForReadyRead(500);
+        const QByteArray request = socket->readAll();
+        const QByteArray firstLine = request.left(request.indexOf("\r\n"));
+        // Первая строка: «GET /callback?code=...&state=... HTTP/1.1».
+        QUrlQuery query;
+        const int question = firstLine.indexOf('?');
+        if (question >= 0) {
+            const int space = firstLine.indexOf(' ', question);
+            const int end = space > question ? space : firstLine.size();
+            query.setQuery(QString::fromLatin1(firstLine.mid(question + 1, end - question - 1)));
+        }
+        const QByteArray body =
+            "<html><body style='font-family:sans-serif'><h3>Аура: доступ получен</h3>"
+            "<p>Окно можно закрыть и вернуться в приложение.</p></body></html>";
+        socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
+                      "Content-Length: " + QByteArray::number(body.size()) +
+                      "\r\nConnection: close\r\n\r\n" + body);
+        socket->waitForBytesWritten(500);
+        socket->disconnectFromHost();
+        const QString code = query.queryItemValue(QStringLiteral("code"));
+        const QString state = query.queryItemValue(QStringLiteral("state"));
+        if (!code.isEmpty() && !state.isEmpty() && !pendingProvider_.isEmpty()) {
+            completeIntegration(pendingProvider_, code, state);
+        }
+    }
+}
+
+void AppStore::completeIntegration(const QString& provider, const QString& code,
+                                   const QString& state) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("provider"), provider);
+    payload.insert(QStringLiteral("code"), code);
+    payload.insert(QStringLiteral("state"), state);
+    client_->sendRequest(QStringLiteral("integrations.callback"), payload,
+                         [this, provider](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             const QString account = response.value(QStringLiteral("payload"))
+                                                         .toObject()
+                                                         .value(QStringLiteral("account"))
+                                                         .toString();
+                             setStatus(account.isEmpty()
+                                           ? QStringLiteral("Подключено: %1").arg(provider)
+                                           : QStringLiteral("Подключено: %1 (%2)")
+                                                 .arg(provider, account));
+                             pendingProvider_.clear();
+                             loadIntegrations();
+                         });
+}
+
+void AppStore::revokeIntegration(qint64 connectionId) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), static_cast<double>(connectionId));
+    client_->sendRequest(QStringLiteral("integrations.revoke"), payload,
+                         [this](const QJsonObject&, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             setStatus(QStringLiteral("Доступ отозван"));
+                             loadIntegrations();
+                         });
+}
+
+void AppStore::syncIntegration(qint64 connectionId) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), static_cast<double>(connectionId));
+    client_->sendRequest(QStringLiteral("integrations.sync"), payload,
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             const QJsonObject payload =
+                                 response.value(QStringLiteral("payload")).toObject();
+                             if (payload.value(QStringLiteral("provider")).toString() ==
+                                 QLatin1String("google_calendar")) {
+                                 setStatus(QStringLiteral("Календарь синхронизирован: %1 событий")
+                                               .arg(payload.value(QStringLiteral("events")).toInt()));
+                                 refreshMemory();
+                             } else {
+                                 setStatus(QStringLiteral("Синхронизировано: %1")
+                                               .arg(payload.value(QStringLiteral("profile_email"))
+                                                        .toString()));
+                             }
                          });
 }
 

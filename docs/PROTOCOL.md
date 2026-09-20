@@ -240,6 +240,39 @@ due_at, remind_at, reminded_at, …)`; статусы `pending`/`done`/`cancelle
 
 Событие: `task.due` (владельцу задачи, когда наступил срок напоминания).
 
+### Интеграции: Google OAuth 2.0 + PKCE (этап 9)
+
+Провайдеры: `google_calendar` (scope `calendar.events.readonly`) и
+`google_gmail` (scope `gmail.send`). Поток подключения: `integrations.begin` →
+пользователь открывает `authorize_url` и разрешает доступ на consent-экране
+Google → Google редиректит на `redirect_uri` с `code` + `state` → клиент
+шлёт `integrations.callback`. Сервер обменивает код на токены (PKCE
+`code_verifier`, метод S256), шифрует их AES-256-GCM и сохраняет в
+`integration_connections`; `state`/`verifier` одноразовые
+(`integration_oauth_states`, TTL `AURA_OAUTH_STATE_TTL`, по умолчанию 600 с).
+**Токены клиенту не отдаются никогда.**
+
+| тип | payload | ответ |
+| --- | --- | --- |
+| `integrations.list` | — | `providers[]` (`provider`, `name`, `description`, `scope`), `connections[]` (`id`, `provider`, `account`, `scope`, `status`, `last_error?`, `created_at`, `last_used_at?`) |
+| `integrations.begin` | `provider`, `redirect_uri` | `provider`, `authorize_url`, `state`, `expires_in`; неизвестный провайдер → `bad_request`, OAuth не настроен → `not_configured` |
+| `integrations.callback` | `provider`, `code`, `state` | подключение (без токенов); недействительный/повторный/истёкший `state` → `bad_request`, отказ провайдера → `oauth_error`, эндаунт недоступен → `upstream_error` |
+| `integrations.revoke` | `id` | `id`, `status=revoked`; чужое/несуществующее → `not_found`; провайдер недоступен → `upstream_error` (запись сохраняется для повтора) |
+| `integrations.sync` | `id` | календарь: `events`, `facts` (события сохраняются в память, kind `schedule.google`); Gmail: `profile_email` |
+
+Access-токен автоматически обновляется по `refresh_token` (при HTTP 401 или
+перед истечением). Инструменты используют подключения прозрачно: `send_email`
+отправляет письмо через Gmail API (`messages.send`, RFC 2822 в base64url),
+если подключён `google_gmail`, иначе — прежний почтовый путь; `check_calendar`
+возвращает реальные события (`source=google_calendar`), иначе память
+(`source=memory`).
+
+Переменные окружения: `AURA_GOOGLE_CLIENT_ID`, `AURA_GOOGLE_CLIENT_SECRET`,
+`AURA_GOOGLE_AUTH_URL`, `AURA_GOOGLE_TOKEN_URL`, `AURA_GOOGLE_REVOKE_URL`,
+`AURA_GOOGLE_CALENDAR_URL`, `AURA_GOOGLE_GMAIL_URL`, `AURA_OAUTH_STATE_TTL`.
+По умолчанию URL — реальные эндпоинты Google (прод — за TLS-терминирующим
+прокси); e2e подменяет их локальным mock-сервером (`AURA_E2E_GOOGLE_MOCK=1`).
+
 ## HTTP API Python AI Service
 
 | метод | путь | назначение |

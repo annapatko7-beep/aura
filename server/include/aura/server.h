@@ -24,6 +24,8 @@
 
 namespace aura {
 
+class IntegrationManager;  // server/src/integrationmanager.h (этап 9)
+
 class Server {
 public:
     using Handler = std::function<Json(std::shared_ptr<Session>, const protocol::Request&)>;
@@ -52,6 +54,7 @@ public:
     ToolManager& tools() { return *tools_; }
     AgentManager& agent() { return *agent_; }
     TaskManager& taskManager() { return *taskManager_; }
+    IntegrationManager& integrations() { return *integrations_; }
     ConnectionManager& connections() { return connections_; }
 
     // Один проход планировщика напоминаний (публично для тестов).
@@ -77,6 +80,7 @@ private:
     std::unique_ptr<ToolManager> tools_;
     std::unique_ptr<AgentManager> agent_;
     std::unique_ptr<TaskManager> taskManager_;
+    std::unique_ptr<IntegrationManager> integrations_;
     std::unique_ptr<Listener> listener_;
     ConnectionManager connections_;
 

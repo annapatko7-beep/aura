@@ -51,6 +51,14 @@ Config Config::fromEnv() {
     config.pingIntervalSec = intOr("AURA_PING_INTERVAL", config.pingIntervalSec);
     config.socketTimeoutSec = intOr("AURA_SOCKET_TIMEOUT", config.socketTimeoutSec);
     config.schedulerIntervalMs = intOr("AURA_SCHEDULER_INTERVAL_MS", config.schedulerIntervalMs);
+    config.googleClientId = envOr("AURA_GOOGLE_CLIENT_ID", config.googleClientId);
+    config.googleClientSecret = envOr("AURA_GOOGLE_CLIENT_SECRET", config.googleClientSecret);
+    config.googleAuthUrl = envOr("AURA_GOOGLE_AUTH_URL", config.googleAuthUrl);
+    config.googleTokenUrl = envOr("AURA_GOOGLE_TOKEN_URL", config.googleTokenUrl);
+    config.googleRevokeUrl = envOr("AURA_GOOGLE_REVOKE_URL", config.googleRevokeUrl);
+    config.googleCalendarUrl = envOr("AURA_GOOGLE_CALENDAR_URL", config.googleCalendarUrl);
+    config.googleGmailUrl = envOr("AURA_GOOGLE_GMAIL_URL", config.googleGmailUrl);
+    config.oauthStateTtlSec = intOr("AURA_OAUTH_STATE_TTL", config.oauthStateTtlSec);
     config.logLevel = envOr("AURA_LOG_LEVEL", config.logLevel);
     return config;
 }

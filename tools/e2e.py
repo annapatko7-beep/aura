@@ -115,8 +115,154 @@ class Client:
         return [event for event in self.events if event.get("event") == name]
 
 
+class GoogleMock:
+    """Mock эндпоинтов Google OAuth/API для e2e (этап 9).
+
+    Поднимается только при AURA_E2E_GOOGLE_MOCK=1; C++-сервер должен быть
+    запущен с AURA_GOOGLE_* на этот порт (net.h не делает TLS — mock по http).
+    Проверяет PKCE: code_challenge из /auth сверяется с SHA256(code_verifier).
+    Первый access_token календаря («access-cal-1») на /events отвечает 401 —
+    так проверяется авто-refresh по refresh_token.
+    """
+
+    def __init__(self, port: int):
+        self.port = port
+        self.codes: Dict[str, Dict[str, str]] = {}
+        self.refreshed = 0
+        self.revoked_tokens: list[str] = []
+        self.sent_raw: list[str] = []
+        self._server: asyncio.AbstractServer | None = None
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", self.port)
+
+    async def stop(self) -> None:
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
+
+    def _id_token(self, email: str) -> str:
+        header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
+        payload = base64.urlsafe_b64encode(
+            json.dumps({"email": email, "sub": "e2e-user"}).encode()).rstrip(b"=").decode()
+        return f"{header}.{payload}.sig"
+
+    def _route(self, method: str, target: str, headers: Dict[str, str],
+               body: str) -> tuple[int, str, Dict[str, str]]:
+        from urllib.parse import parse_qs, urlparse
+        url = urlparse(target)
+        query = parse_qs(url.query)
+        if url.path == "/o/oauth2/v2/auth":
+            # «Consent-экран»: сразу выдаём code и редиректим на redirect_uri.
+            code = "code-" + uuid.uuid4().hex[:12]
+            self.codes[code] = {
+                "challenge": query.get("code_challenge", [""])[0],
+                "redirect_uri": query.get("redirect_uri", [""])[0],
+                "scope": query.get("scope", [""])[0],
+            }
+            state = query.get("state", [""])[0]
+            redirect = query.get("redirect_uri", [""])[0]
+            location = f"{redirect}{'&' if '?' in redirect else '?'}code={code}&state={state}"
+            return 302, "", {"Location": location}
+        if url.path == "/token":
+            form = parse_qs(body)
+            grant = form.get("grant_type", [""])[0]
+            if grant == "authorization_code":
+                stored = self.codes.pop(form.get("code", [""])[0], None)
+                if stored is None:
+                    return 400, json.dumps({"error": "invalid_grant"}), {}
+                verifier = form.get("code_verifier", [""])[0]
+                expected = base64.urlsafe_b64encode(
+                    hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+                if expected != stored["challenge"]:
+                    return 400, json.dumps(
+                        {"error": "invalid_grant", "error_description": "pkce mismatch"}), {}
+                access = "access-gmail-1" if "gmail" in stored["scope"] else "access-cal-1"
+                return 200, json.dumps({
+                    "access_token": access,
+                    "refresh_token": "refresh-e2e",
+                    "expires_in": 3600,
+                    "id_token": self._id_token("e2e-user@gmail.com"),
+                    "scope": stored["scope"],
+                    "token_type": "Bearer",
+                }), {}
+            if grant == "refresh_token":
+                self.refreshed += 1
+                return 200, json.dumps({
+                    "access_token": f"access-refreshed-{self.refreshed}",
+                    "expires_in": 3600,
+                    "token_type": "Bearer",
+                }), {}
+            return 400, json.dumps({"error": "unsupported_grant_type"}), {}
+        if url.path == "/revoke":
+            form = parse_qs(body)
+            self.revoked_tokens.append(form.get("token", [""])[0])
+            return 200, "", {}
+        if url.path == "/calendar/v3/calendars/primary/events":
+            if headers.get("authorization", "") != "Bearer access-refreshed-1":
+                # Первичный токен «истёк» — сервер должен обновить его и повторить.
+                return 401, json.dumps({"error": {"message": "token expired"}}), {}
+            return 200, json.dumps({"items": [
+                {"summary": "Планёрка", "start": {"dateTime": "2030-01-02T10:00:00Z"}},
+                {"summary": "Врач", "start": {"date": "2030-01-03"}},
+            ]}), {}
+        if url.path == "/gmail/v1/users/me/profile":
+            return 200, json.dumps({"emailAddress": "e2e-user@gmail.com"}), {}
+        if url.path == "/gmail/v1/users/me/messages/send":
+            try:
+                raw = json.loads(body).get("raw", "")
+            except json.JSONDecodeError:
+                raw = ""
+            self.sent_raw.append(raw)
+            if not raw:
+                return 400, json.dumps({"error": {"message": "empty raw"}}), {}
+            return 200, json.dumps({"id": "msg-e2e", "threadId": "thr-e2e"}), {}
+        return 404, json.dumps({"error": {"message": "not found"}}), {}
+
+    async def _handle(self, reader: asyncio.StreamReader,
+                      writer: asyncio.StreamWriter) -> None:
+        try:
+            request_line = (await reader.readline()).decode("latin-1").strip()
+            if not request_line:
+                return
+            headers: Dict[str, str] = {}
+            while True:
+                line = await reader.readline()
+                if line in (b"\r\n", b"\n", b""):
+                    break
+                key, _, value = line.decode("latin-1").partition(":")
+                headers[key.strip().lower()] = value.strip()
+            body = b""
+            if headers.get("content-length"):
+                body = await reader.readexactly(int(headers["content-length"]))
+            parts = request_line.split(" ")
+            method = parts[0]
+            target = parts[1] if len(parts) > 1 else "/"
+            status, payload, extra = self._route(method, target, headers,
+                                                 body.decode("utf-8", "replace"))
+            payload_bytes = payload.encode("utf-8")
+            head = f"HTTP/1.1 {status} {'OK' if status == 200 else 'Result'}\r\n"
+            head += f"Content-Length: {len(payload_bytes)}\r\nConnection: close\r\n"
+            for key, value in extra.items():
+                head += f"{key}: {value}\r\n"
+            head += "\r\n"  # пустая строка: конец заголовков (строгий парсер net.h)
+            writer.write(head.encode("latin-1") + payload_bytes)
+            await writer.drain()
+        except (ConnectionResetError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+
+
 async def main() -> int:
     print(f"Aura E2E → {SERVER_URL} (прогон {RUN})\n")
+
+    # Google mock (этап 9): поднимается только при AURA_E2E_GOOGLE_MOCK=1,
+    # C++-сервер при этом запущен с AURA_GOOGLE_* на 127.0.0.1:<порт mock>.
+    google_mock: GoogleMock | None = None
+    if os.environ.get("AURA_E2E_GOOGLE_MOCK") == "1":
+        google_mock = GoogleMock(int(os.environ.get("AURA_E2E_GOOGLE_MOCK_PORT", "9081")))
+        await google_mock.start()
 
     anna = Client("anna")
     anya = Client("anya")
@@ -511,8 +657,109 @@ async def main() -> int:
           "2FA: отключена после подтверждения паролем", status_off.get("payload"))
     await vera.close()
 
+    # ------------------------------------------------ интеграции (этап 9)
+    if google_mock is not None:
+        print("\n5. Интеграции: Google OAuth 2.0 + PKCE (Календарь + Gmail)")
+        import http.client
+        from urllib.parse import parse_qs, urlparse
+
+        async def google_connect(provider: str) -> Dict[str, Any]:
+            """Полный OAuth-поток: begin → consent (mock 302) → callback."""
+            begin = await anna.call("integrations.begin", {
+                "provider": provider,
+                "redirect_uri": f"http://127.0.0.1:{google_mock.port}/cb",
+            })
+            begin_payload = begin.get("payload", {})
+            check(begin.get("type") == "ok", f"OAuth {provider}: begin", begin)
+            parsed = urlparse(begin_payload.get("authorize_url", ""))
+            check("code_challenge_method=S256" in parsed.query,
+                  f"OAuth {provider}: PKCE S256 в ссылке", begin_payload.get("authorize_url"))
+            # «Заходим» на consent-экран: mock делает 302 → redirect_uri?code&state.
+            # Запрос в отдельном потоке: http.client блокирующий, а mock живёт
+            # в том же event loop.
+            def fetch_consent() -> tuple:
+                conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 80,
+                                                  timeout=10)
+                conn.request("GET", f"{parsed.path}?{parsed.query}")
+                response = conn.getresponse()
+                location = response.getheader("Location", "")
+                conn.close()
+                return response.status, location
+
+            status, location = await asyncio.to_thread(fetch_consent)
+            check(status == 302 and "code=" in location,
+                  f"OAuth {provider}: consent-редирект с code", location)
+            redirect_query = parse_qs(urlparse(location).query)
+            done = await anna.call("integrations.callback", {
+                "provider": provider,
+                "code": redirect_query.get("code", [""])[0],
+                "state": redirect_query.get("state", [""])[0],
+            })
+            check(done.get("type") == "ok", f"OAuth {provider}: callback с токенами", done)
+            check(done.get("payload", {}).get("account") == "e2e-user@gmail.com",
+                  f"OAuth {provider}: аккаунт из id_token", done.get("payload"))
+            return done.get("payload", {})
+
+        calendar_conn = await google_connect("google_calendar")
+
+        # State одноразовый: повторный/чужой callback отклоняется.
+        replay = await anna.call("integrations.callback", {
+            "provider": "google_calendar", "code": "whatever", "state": "does-not-exist"})
+        check(replay.get("code") == "bad_request", "OAuth: недействительный state отклонён", replay)
+
+        listed = await anna.call("integrations.list")
+        connections = listed.get("payload", {}).get("connections", [])
+        check(any(c.get("provider") == "google_calendar" and c.get("status") == "active"
+                  for c in connections), "интеграция активна в списке", connections)
+        check("token_encrypted" not in json.dumps(listed) and "access-cal" not in json.dumps(listed),
+              "integrations.list: токены наружу не отдаются", listed)
+
+        # Синхронизация: mock отвечает 401 на первичный токен → сервер
+        # обновляет access_token по refresh_token и повторяет запрос.
+        sync = await anna.call("integrations.sync", {"id": calendar_conn.get("id")})
+        check(sync.get("type") == "ok", "sync календаря (с авто-обновлением токена)", sync)
+        check(sync.get("payload", {}).get("events") == 2,
+              "sync: получено 2 события", sync.get("payload"))
+        check(google_mock.refreshed == 1,
+              "refresh_token: ровно одно обновление", google_mock.refreshed)
+
+        # Расписание легло в память: check_calendar берёт данные из Google.
+        calendar_tool = await anna.call("tool.run", {"tool": "check_calendar", "args": {}})
+        check(calendar_tool.get("payload", {}).get("source") == "google_calendar",
+              "check_calendar: источник — Google", calendar_tool.get("payload"))
+        check(len(calendar_tool.get("payload", {}).get("busy", [])) == 2,
+              "check_calendar: 2 события из Google", calendar_tool.get("payload"))
+
+        # Gmail: подключаем и отправляем письмо через реальный API-контракт.
+        gmail_conn = await google_connect("google_gmail")
+        allow_email = await anna.call("permissions.set", {"tool": "send_email", "mode": "allow"})
+        check(allow_email.get("type") == "ok", "разрешение: send_email → allow", allow_email)
+        sent = await anna.call("tool.run", {"tool": "send_email", "args": {
+            "to": "friend@example.com", "subject": "E2E", "body": "Проверка интеграции"}})
+        check(sent.get("payload", {}).get("provider") == "google_gmail",
+              "send_email: отправлено через Gmail API", sent.get("payload"))
+        check(sent.get("payload", {}).get("message_id") == "msg-e2e",
+              "send_email: id сообщения от Gmail", sent.get("payload"))
+        raw = google_mock.sent_raw[-1] if google_mock.sent_raw else ""
+        decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "replace")
+        check("To: friend@example.com" in decoded and "Проверка интеграции" in decoded,
+              "send_email: корректное RFC 2822 письмо", decoded[:80])
+
+        # Отзыв доступа: у провайдера и локально.
+        revoked = await anna.call("integrations.revoke", {"id": calendar_conn.get("id")})
+        check(revoked.get("type") == "ok", "revoke: календарь отключён", revoked)
+        check(google_mock.revoked_tokens == ["refresh-e2e"],
+              "revoke: refresh_token отправлен Google", google_mock.revoked_tokens)
+        again = await anna.call("integrations.revoke", {"id": calendar_conn.get("id")})
+        check(again.get("code") == "not_found", "revoke: повторный отзыв — not_found", again)
+        after = await anna.call("integrations.list")
+        providers = [c.get("provider") for c in after.get("payload", {}).get("connections", [])]
+        check(providers == ["google_gmail"], "список: остался только Gmail", providers)
+        gmail_revoked = await anna.call("integrations.revoke", {"id": gmail_conn.get("id")})
+        check(gmail_revoked.get("type") == "ok", "revoke: Gmail отключён", gmail_revoked)
+
     # -------------------------------------------------------------- итоги
-    print("\n5. Состояние сервера")
+    print("\n6. Состояние сервера")
     info = await anna.call("server.info")
     server_payload = info.get("payload", {})
     check(server_payload.get("status") == "ok", "healthcheck сервера", server_payload.get("status"))
@@ -523,6 +770,8 @@ async def main() -> int:
 
     await anna.close()
     await anya.close()
+    if google_mock is not None:
+        await google_mock.stop()
 
     print(f"\nпроверок: {checks}, ошибок: {len(failures)}")
     if failures:

@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 
 # Клиент использует QtWebSockets и MultiEffect (QtQuick.Effects) → нужен Qt 6.5+.
 # Multimedia — захват микрофона (STT), TextToSpeech — платформенная озвучка (TTS).
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 WebSockets Multimedia TextToSpeech)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2 WebSockets Multimedia TextToSpeech)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -49,6 +49,7 @@ qt_add_qml_module(aura-client
 target_link_libraries(aura-client PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Network
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2

@@ -121,6 +121,22 @@ Json PendingActionRecord::toJson() const {
     return json;
 }
 
+Json IntegrationConnectionRecord::toJson(bool includeSecret) const {
+    Json json = Json::object();
+    json.set("id", Json(id));
+    json.set("user_id", Json(userId));
+    json.set("provider", Json(provider));
+    json.set("account", Json(account));
+    json.set("scope", Json(scope));
+    json.set("status", Json(status));
+    if (!lastError.empty()) json.set("last_error", Json(lastError));
+    json.set("created_at", Json(createdAt));
+    if (!lastUsedAt.empty()) json.set("last_used_at", Json(lastUsedAt));
+    // Секрет не покидает сервер: поле только для внутренних нужд (тесты/отладка).
+    if (includeSecret) json.set("token_encrypted", Json(tokenEncrypted));
+    return json;
+}
+
 Json TaskRecord::toJson() const {
     Json json = Json::object();
     json.set("id", Json(id));

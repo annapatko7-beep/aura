@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "aura/log.h"
+#include "integrationmanager.h"
 
 namespace aura {
 
@@ -42,7 +43,8 @@ bool Server::start(std::string& error) {
     auth_ = std::make_unique<AuthManager>(*database_, config_);
     chats_ = std::make_unique<ChatManager>(*database_, connections_);
     memory_ = std::make_unique<MemoryManager>(*database_, config_);
-    tools_ = std::make_unique<ToolManager>(config_, *database_, *chats_);
+    integrations_ = std::make_unique<IntegrationManager>(*database_, config_);
+    tools_ = std::make_unique<ToolManager>(config_, *database_, *chats_, integrations_.get());
     agent_ = std::make_unique<AgentManager>(config_, *database_, *memory_, *tools_, *chats_);
     taskManager_ = std::make_unique<TaskManager>(*database_, connections_);
 
@@ -689,6 +691,47 @@ void Server::registerHandlers() {
         Json payload = Json::object();
         payload.set("sent", Json(static_cast<long long>(runSchedulerTick(100))));
         return protocol::ok(request.id, payload);
+    });
+
+    // Интеграции (этап 9): Google OAuth 2.0 + PKCE, токены зашифрованы.
+    registerHandler("integrations.list", [this](std::shared_ptr<Session> session,
+                                                const protocol::Request& request) {
+        const auto result = integrations_->list(session->userId());
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("integrations.begin", [this](std::shared_ptr<Session> session,
+                                                 const protocol::Request& request) {
+        const auto result = integrations_->begin(session->userId(),
+                                                 request.payload.getString("provider"),
+                                                 request.payload.getString("redirect_uri"));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("integrations.callback", [this](std::shared_ptr<Session> session,
+                                                    const protocol::Request& request) {
+        const auto result = integrations_->callback(session->userId(),
+                                                    request.payload.getString("provider"),
+                                                    request.payload.getString("code"),
+                                                    request.payload.getString("state"));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("integrations.revoke", [this](std::shared_ptr<Session> session,
+                                                  const protocol::Request& request) {
+        const auto result = integrations_->revoke(session->userId(), request.payload.getInt("id"));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
+    });
+
+    registerHandler("integrations.sync", [this](std::shared_ptr<Session> session,
+                                                const protocol::Request& request) {
+        const auto result = integrations_->sync(session->userId(), request.payload.getInt("id"));
+        return result.ok ? protocol::ok(request.id, result.payload)
+                         : protocol::error(request.id, result.code, result.message);
     });
 }
 

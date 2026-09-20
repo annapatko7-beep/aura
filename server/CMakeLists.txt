@@ -38,6 +38,7 @@ set(AURA_SOURCES
     src/database_pg.cpp
     src/database_records.cpp
     src/databasemanager.cpp
+    src/integrationmanager.cpp
     src/json.cpp
     src/jwt.cpp
     src/listener.cpp

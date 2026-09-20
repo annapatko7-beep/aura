@@ -107,13 +107,22 @@ iOS-часть (Speech Framework on-device, AVSpeechSynthesizer) — в этап
   переговоров, виджет «быстрый запрос Ауре», Share Extension.
 - Календарь/напоминания: EventKit с запросом разрешения.
 
-## Интеграции (этап 9)
+## Интеграции (этап 9) — ГОТОВО
 
-Общий интерфейс `IntegrationProvider` (OAuth connect/disconnect/re-auth,
-журнал использования, ошибки). В v1: **Google Calendar + Gmail** (реальный
-OAuth), остальные — песочница с тем же контрактом. Токены — только
-зашифрованными (oauth_tokens), доступ к календарю — всегда через
-PermissionGuard.
+Реализовано: Google Calendar + Gmail через реальный OAuth 2.0 Authorization
+Code + PKCE (S256); `IntegrationManager` (begin/callback/list/revoke/sync),
+WS-хендлеры `integrations.*`, таблицы `integration_connections` и
+`integration_oauth_states`, токены — только зашифрованными (AES-256-GCM),
+авто-refresh по `refresh_token`, отзыв доступа у провайдера и локально.
+Инструменты `send_email`/`check_calendar` используют подключения прозрачно.
+UI — секция «Интеграции» в настройках клиента (системный браузер +
+loopback-редирект). Подробности — PROTOCOL.md «Интеграции», SECURITY.md §9.
+
+Исходный план: общий интерфейс `IntegrationProvider` (OAuth
+connect/disconnect/re-auth, журнал использования, ошибки). В v1: **Google
+Calendar + Gmail** (реальный OAuth), остальные — песочница с тем же
+контрактом. Токены — только зашифрованными, доступ к календарю — всегда
+через PermissionGuard.
 
 ## База данных (этап 13 документации + миграции)
 

@@ -1269,7 +1269,180 @@ public:
         return DatabaseError::success();
     }
 
+    // ------------------------------------------- integration_connections
+    DatabaseError upsertIntegrationConnection(const IntegrationConnectionRecord& record,
+                                              long long& outId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        const std::string status = record.status.empty() ? std::string("active") : record.status;
+        if (!execute(
+                "INSERT INTO integration_connections "
+                "(user_id, provider, account, scope, token_encrypted, status, last_error) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+                "ON CONFLICT (user_id, provider) DO UPDATE SET "
+                "account = EXCLUDED.account, scope = EXCLUDED.scope, "
+                "token_encrypted = EXCLUDED.token_encrypted, status = EXCLUDED.status, "
+                "last_error = EXCLUDED.last_error RETURNING id",
+                {std::to_string(record.userId), record.provider, record.account, record.scope,
+                 record.tokenEncrypted, status, record.lastError},
+                &result)) {
+            PQclear(result);
+            return DatabaseError::failure(lastError_);
+        }
+        if (PQntuples(result) > 0) outId = std::atoll(value_(result, 0, 0).c_str());
+        PQclear(result);
+        return DatabaseError::success();
+    }
+
+    std::optional<IntegrationConnectionRecord> findIntegrationConnection(
+        long long userId, const std::string& provider) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        if (!execute(integrationSelect() + " WHERE user_id = $1 AND provider = $2",
+                     {std::to_string(userId), provider}, &result)) {
+            return std::nullopt;
+        }
+        std::optional<IntegrationConnectionRecord> record;
+        if (PQntuples(result) > 0) record = readIntegration(result, 0);
+        PQclear(result);
+        return record;
+    }
+
+    std::vector<IntegrationConnectionRecord> listIntegrationConnections(long long userId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<IntegrationConnectionRecord> entries;
+        PGresult* result = nullptr;
+        if (!execute(integrationSelect() + " WHERE user_id = $1 ORDER BY provider",
+                     {std::to_string(userId)}, &result)) {
+            return entries;
+        }
+        for (int row = 0; row < PQntuples(result); ++row) entries.push_back(readIntegration(result, row));
+        PQclear(result);
+        return entries;
+    }
+
+    DatabaseError updateIntegrationToken(long long id,
+                                         const std::string& tokenEncrypted,
+                                         const std::string& status,
+                                         const std::string& lastError) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute(
+                "UPDATE integration_connections SET token_encrypted = $2, status = $3, last_error = $4 "
+                "WHERE id = $1",
+                {std::to_string(id), tokenEncrypted, status, lastError}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool updated = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!updated) return DatabaseError::failure("подключение не найдено");
+        return DatabaseError::success();
+    }
+
+    DatabaseError touchIntegrationUsed(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute("UPDATE integration_connections SET last_used_at = now() WHERE id = $1",
+                     {std::to_string(id)}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool updated = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!updated) return DatabaseError::failure("подключение не найдено");
+        return DatabaseError::success();
+    }
+
+    DatabaseError deleteIntegrationConnection(long long id) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute("DELETE FROM integration_connections WHERE id = $1", {std::to_string(id)}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool deleted = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!deleted) return DatabaseError::failure("подключение не найдено");
+        return DatabaseError::success();
+    }
+
+    // --------------------------------------------- integration_oauth_states
+    DatabaseError createOauthState(const OauthStateRecord& record) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute(
+                "INSERT INTO integration_oauth_states "
+                "(state, user_id, provider, verifier, redirect_uri, expires_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6::timestamptz)",
+                {record.state, std::to_string(record.userId), record.provider, record.verifier,
+                 record.redirectUri, record.expiresAt},
+                &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        PQclear(res);
+        return DatabaseError::success();
+    }
+
+    std::optional<OauthStateRecord> findOauthState(const std::string& state) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* result = nullptr;
+        if (!execute(
+                "SELECT state, user_id, provider, verifier, redirect_uri, "
+                "to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                "to_char(used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM integration_oauth_states WHERE state = $1",
+                {state}, &result)) {
+            return std::nullopt;
+        }
+        std::optional<OauthStateRecord> record;
+        if (PQntuples(result) > 0) {
+            OauthStateRecord value;
+            value.state = value_(result, 0, 0);
+            value.userId = std::atoll(value_(result, 0, 1).c_str());
+            value.provider = value_(result, 0, 2);
+            value.verifier = value_(result, 0, 3);
+            value.redirectUri = value_(result, 0, 4);
+            value.expiresAt = value_(result, 0, 5);
+            value.usedAt = value_(result, 0, 6);
+            record = value;
+        }
+        PQclear(result);
+        return record;
+    }
+
+    DatabaseError useOauthState(const std::string& state) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PGresult* res = nullptr;
+        if (!execute("UPDATE integration_oauth_states SET used_at = now() WHERE state = $1", {state}, &res)) {
+            return DatabaseError::failure(lastError_);
+        }
+        const bool updated = std::atoi(PQcmdTuples(res)) > 0;
+        PQclear(res);
+        if (!updated) return DatabaseError::failure("состояние OAuth не найдено");
+        return DatabaseError::success();
+    }
+
 private:
+    static std::string integrationSelect() {
+        return "SELECT id, user_id, provider, account, scope, token_encrypted, status, last_error, "
+               "to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), "
+               "to_char(last_used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') "
+               "FROM integration_connections";
+    }
+
+    IntegrationConnectionRecord readIntegration(PGresult* result, int row) const {
+        IntegrationConnectionRecord record;
+        record.id = std::atoll(value_(result, row, 0).c_str());
+        record.userId = std::atoll(value_(result, row, 1).c_str());
+        record.provider = value_(result, row, 2);
+        record.account = value_(result, row, 3);
+        record.scope = value_(result, row, 4);
+        record.tokenEncrypted = value_(result, row, 5);
+        record.status = value_(result, row, 6);
+        record.lastError = value_(result, row, 7);
+        record.createdAt = value_(result, row, 8);
+        record.lastUsedAt = value_(result, row, 9);
+        return record;
+    }
+
     static std::string taskSelect() {
         const char* ts = "to_char(%s AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')";
         char due[96], remind[96], reminded[96], created[96], completed[96];

@@ -15,6 +15,8 @@
 
 namespace aura {
 
+class IntegrationManager;  // интеграции (этап 9): Gmail/Google Calendar
+
 class ToolManager {
 public:
     struct Result {
@@ -23,7 +25,10 @@ public:
         std::string error;
     };
 
-    ToolManager(const Config& config, DatabaseManager& database, ChatManager& chats);
+    // integrations может быть nullptr (тесты/режим без интеграций) — тогда
+    // send_email/check_calendar работают через прежние пути (email API/память).
+    ToolManager(const Config& config, DatabaseManager& database, ChatManager& chats,
+                IntegrationManager* integrations = nullptr);
 
     Json list() const;
     Result run(long long userId, const std::string& tool, const Json& args);
@@ -55,6 +60,7 @@ private:
     const Config& config_;
     DatabaseManager& database_;
     ChatManager& chats_;
+    IntegrationManager* integrations_ = nullptr;
     mutable std::size_t executed_ = 0;
 };
 

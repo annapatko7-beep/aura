@@ -1029,6 +1029,138 @@ Item {
                     }
                 }
             }
+
+            // --------------------------------------------- Интеграции (этап 9)
+            GlassPanel {
+                Layout.fillWidth: true
+                backdrop: page.Window.window ? page.Window.window.contentItem : null
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: AuraTheme.spaceMd
+
+                    Text {
+                        text: "Интеграции"
+                        font.family: AuraTheme.fontFamily
+                        font.pixelSize: AuraTheme.fontTitle
+                        font.weight: Font.DemiBold
+                        color: AuraTheme.textPrimary
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Подключите Google Календарь и Gmail через официальный OAuth. "
+                              + "Токены хранятся на сервере зашифрованными и не передаются "
+                              + "клиенту; доступ можно отозвать в любой момент."
+                        font.family: AuraTheme.fontFamily
+                        font.pixelSize: AuraTheme.fontMicro
+                        color: AuraTheme.textSecondary
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Repeater {
+                        model: App ? App.integrationProviders : []
+
+                        delegate: RowLayout {
+                            id: providerRow
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: AuraTheme.spaceMd
+
+                            // Активное подключение этого провайдера (или null).
+                            property var connection: {
+                                const list = App ? App.integrations : []
+                                for (let i = 0; i < list.length; ++i) {
+                                    if (list[i].provider === providerRow.modelData.provider)
+                                        return list[i]
+                                }
+                                return null
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                RowLayout {
+                                    spacing: AuraTheme.spaceXs
+                                    Text {
+                                        text: providerRow.modelData.name
+                                        font.family: AuraTheme.fontFamily
+                                        font.pixelSize: AuraTheme.fontSmall
+                                        font.weight: Font.DemiBold
+                                        color: AuraTheme.textPrimary
+                                    }
+                                    Rectangle {
+                                        visible: providerRow.connection !== null
+                                        radius: AuraTheme.radiusPill
+                                        implicitWidth: stateLabel.implicitWidth + 14
+                                        implicitHeight: 18
+                                        color: providerRow.connection
+                                               && providerRow.connection.status === "active"
+                                               ? Qt.rgba(0.29, 0.87, 0.50, 0.12)
+                                               : Qt.rgba(0.98, 0.75, 0.14, 0.12)
+                                        border.width: 1
+                                        border.color: providerRow.connection
+                                                      && providerRow.connection.status === "active"
+                                                      ? Qt.rgba(0.29, 0.87, 0.50, 0.40)
+                                                      : Qt.rgba(0.98, 0.75, 0.14, 0.40)
+                                        Text {
+                                            id: stateLabel
+                                            anchors.centerIn: parent
+                                            text: providerRow.connection
+                                                  ? (providerRow.connection.status === "active"
+                                                     ? "подключено" : providerRow.connection.status)
+                                                  : ""
+                                            font.family: AuraTheme.fontFamily
+                                            font.pixelSize: AuraTheme.fontMicro
+                                            color: providerRow.connection
+                                                   && providerRow.connection.status === "active"
+                                                   ? AuraTheme.success : AuraTheme.warning
+                                        }
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: providerRow.connection
+                                          && providerRow.connection.account
+                                          ? providerRow.modelData.description + " · "
+                                            + providerRow.connection.account
+                                          : providerRow.modelData.description
+                                    font.family: AuraTheme.fontFamily
+                                    font.pixelSize: AuraTheme.fontMicro
+                                    color: AuraTheme.textMuted
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            RowLayout {
+                                spacing: AuraTheme.spaceXs
+
+                                GlassButton {
+                                    visible: providerRow.connection === null
+                                    text: "Подключить"
+                                    variant: "accent"
+                                    implicitHeight: 32
+                                    onClicked: App.beginIntegration(providerRow.modelData.provider)
+                                }
+                                GlassButton {
+                                    visible: providerRow.connection !== null
+                                    text: "Синхронизировать"
+                                    variant: "quiet"
+                                    implicitHeight: 32
+                                    onClicked: App.syncIntegration(providerRow.connection.id)
+                                }
+                                GlassButton {
+                                    visible: providerRow.connection !== null
+                                    text: "Отключить"
+                                    variant: "quiet"
+                                    implicitHeight: 32
+                                    onClicked: App.revokeIntegration(providerRow.connection.id)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
