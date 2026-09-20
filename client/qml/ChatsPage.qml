@@ -94,6 +94,12 @@ Item {
             }
         }
 
+        // -------------------------------------------- задачи и напоминания
+        TasksPanel {
+            Layout.fillWidth: true
+            backdrop: page.Window.window ? page.Window.window.contentItem : null
+        }
+
         // -------------------------------------------------- список чатов
         GlassPanel {
             Layout.fillWidth: true

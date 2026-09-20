@@ -165,6 +165,10 @@ void AppStore::applyAuth(const QJsonObject& payload) {
 
     emit profileChanged();
     if (firstTime) emit authenticatedChanged();
+    // Этап 8: сразу подтягиваем разрешения, отложенные подтверждения и задачи.
+    loadPermissions();
+    loadConfirmations();
+    loadTasks();
     setStatus(QStringLiteral("Добро пожаловать, %1").arg(userName_));
 }
 
@@ -682,6 +686,20 @@ void AppStore::askAgent(qint64 chatId, const QString& message) {
                              speakImportant(reply.isEmpty() ? QStringLiteral("Готово") : reply);
                              loadMessages(chatId);
                              loadMemory();
+                             // Этап 8: опасные операции не исполнены — ждут подтверждения.
+                             int pendingCount = 0;
+                             const QJsonArray results = body.value(QStringLiteral("results")).toArray();
+                             for (const QJsonValue& item : results) {
+                                 if (item.toObject().value(QStringLiteral("requires_confirmation")).toBool()) {
+                                     ++pendingCount;
+                                 }
+                             }
+                             if (pendingCount > 0) {
+                                 loadConfirmations();
+                                 setStatus(QStringLiteral("Нужно подтверждение: %1 действи%2")
+                                               .arg(pendingCount)
+                                               .arg(pendingCount == 1 ? "е" : "я"));
+                             }
                          });
 }
 
@@ -780,6 +798,15 @@ void AppStore::handleEvent(const QString& name, const QJsonObject& payload) {
     if (name == QLatin1String("chat.created")) {
         loadChats();
         setStatus(QStringLiteral("Вас добавили в новый чат"));
+        return;
+    }
+    if (name == QLatin1String("task.due")) {
+        // Этап 8: планировщик прислал напоминание — в начало списка и озвучить.
+        tasks_.prepend(payload.toVariantMap());
+        emit tasksChanged();
+        const QString title = payload.value(QStringLiteral("title")).toString();
+        setStatus(QStringLiteral("Напоминание: %1").arg(title));
+        speakImportant(QStringLiteral("Напоминание: %1").arg(title));
         return;
     }
     if (name == QLatin1String("session.ready")) {
@@ -1116,6 +1143,156 @@ void AppStore::saveVoiceSettings() {
     settings.setValue(QLatin1String(kTtsRateKey), ttsRate_);
     settings.setValue(QLatin1String(kTtsVolumeKey), ttsVolume_);
     settings.setValue(QLatin1String(kTtsImportantOnlyKey), ttsImportantOnly_);
+}
+
+// ---------------------------------------------------------------------------
+//  Этап 8: разрешения, подтверждения, задачи
+// ---------------------------------------------------------------------------
+
+void AppStore::loadPermissions() {
+    client_->sendRequest(QStringLiteral("permissions.list"), {},
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             toolPermissions_ = response.value(QStringLiteral("payload")).toObject()
+                                                    .value(QStringLiteral("tools")).toArray().toVariantList();
+                             emit toolPermissionsChanged();
+                         });
+}
+
+void AppStore::setToolPermission(const QString& tool, const QString& mode) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("tool"), tool);
+    payload.insert(QStringLiteral("mode"), mode);
+    client_->sendRequest(QStringLiteral("permissions.set"), payload,
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             // Перечитываем каталог: эффективный режим мог измениться.
+                             loadPermissions();
+                         });
+}
+
+void AppStore::loadConfirmations() {
+    client_->sendRequest(QStringLiteral("confirmation.list"), {},
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             confirmations_ = response.value(QStringLiteral("payload")).toObject()
+                                                  .value(QStringLiteral("actions")).toArray().toVariantList();
+                             emit confirmationsChanged();
+                         });
+}
+
+void AppStore::approveConfirmation(qint64 actionId) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), static_cast<double>(actionId));
+    client_->sendRequest(QStringLiteral("confirmation.approve"), payload,
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             const QJsonObject body = response.value(QStringLiteral("payload")).toObject();
+                             setStatus(body.value(QStringLiteral("status")).toString() == QLatin1String("executed")
+                                           ? QStringLiteral("Действие выполнено")
+                                           : QStringLiteral("Действие не удалось выполнить"));
+                             loadConfirmations();
+                             loadTasks();
+                             loadMemory();
+                         });
+}
+
+void AppStore::denyConfirmation(qint64 actionId) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), static_cast<double>(actionId));
+    client_->sendRequest(QStringLiteral("confirmation.deny"), payload,
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             setStatus(QStringLiteral("Действие отклонено"));
+                             loadConfirmations();
+                         });
+}
+
+void AppStore::loadTasks() {
+    client_->sendRequest(QStringLiteral("tasks.list"), {},
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             tasks_ = response.value(QStringLiteral("payload")).toObject()
+                                          .value(QStringLiteral("tasks")).toArray().toVariantList();
+                             emit tasksChanged();
+                         });
+}
+
+void AppStore::createTask(const QString& title, const QString& notes, const QString& remindAt) {
+    if (title.trimmed().isEmpty()) {
+        setError(QStringLiteral("Введите название задачи"));
+        return;
+    }
+    QJsonObject payload;
+    payload.insert(QStringLiteral("title"), title.trimmed());
+    if (!notes.trimmed().isEmpty()) payload.insert(QStringLiteral("notes"), notes.trimmed());
+    if (!remindAt.trimmed().isEmpty()) payload.insert(QStringLiteral("remind_at"), remindAt.trimmed());
+    client_->sendRequest(QStringLiteral("tasks.create"), payload,
+                         [this](const QJsonObject& response, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             setStatus(QStringLiteral("Задача добавлена"));
+                             loadTasks();
+                         });
+}
+
+void AppStore::completeTask(qint64 taskId) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), static_cast<double>(taskId));
+    client_->sendRequest(QStringLiteral("tasks.complete"), payload,
+                         [this](const QJsonObject&, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             loadTasks();
+                         });
+}
+
+void AppStore::cancelTask(qint64 taskId) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), static_cast<double>(taskId));
+    client_->sendRequest(QStringLiteral("tasks.cancel"), payload,
+                         [this](const QJsonObject&, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             loadTasks();
+                         });
+}
+
+void AppStore::deleteTask(qint64 taskId) {
+    QJsonObject payload;
+    payload.insert(QStringLiteral("id"), static_cast<double>(taskId));
+    client_->sendRequest(QStringLiteral("tasks.delete"), payload,
+                         [this](const QJsonObject&, const QString& error) {
+                             if (!error.isEmpty()) {
+                                 setError(error);
+                                 return;
+                             }
+                             loadTasks();
+                         });
 }
 
 }  // namespace aura

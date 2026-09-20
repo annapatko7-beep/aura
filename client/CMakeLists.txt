@@ -42,6 +42,8 @@ qt_add_qml_module(aura-client
         qml/components/ChatBubble.qml
         qml/components/AuraAvatar.qml
         qml/components/VoicePanel.qml
+        qml/components/ConfirmationPanel.qml
+        qml/components/TasksPanel.qml
 )
 
 target_link_libraries(aura-client PRIVATE

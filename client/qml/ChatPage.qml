@@ -115,6 +115,12 @@ Item {
             }
         }
 
+        // ------------------------------------------ подтверждение действий Ауры
+        ConfirmationPanel {
+            Layout.fillWidth: true
+            backdrop: page.Window.window ? page.Window.window.contentItem : null
+        }
+
         // ------------------------------------------------------- ввод
         GlassPanel {
             Layout.fillWidth: true

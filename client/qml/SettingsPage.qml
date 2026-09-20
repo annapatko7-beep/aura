@@ -927,6 +927,108 @@ Item {
                     }
                 }
             }
+
+            // --------------------------------------- Разрешения инструментов (этап 8)
+            GlassPanel {
+                Layout.fillWidth: true
+                backdrop: page.Window.window ? page.Window.window.contentItem : null
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: AuraTheme.spaceMd
+
+                    Text {
+                        text: "Разрешения инструментов"
+                        font.family: AuraTheme.fontFamily
+                        font.pixelSize: AuraTheme.fontTitle
+                        font.weight: Font.DemiBold
+                        color: AuraTheme.textPrimary
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Аура лишь формирует намерение — исполняет сервер. "
+                              + "Опасные операции (сообщения, письма, бронирование) по умолчанию "
+                              + "требуют вашего подтверждения."
+                        font.family: AuraTheme.fontFamily
+                        font.pixelSize: AuraTheme.fontMicro
+                        color: AuraTheme.textSecondary
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Repeater {
+                        model: App ? App.toolPermissions : []
+
+                        delegate: RowLayout {
+                            id: toolRow
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: AuraTheme.spaceMd
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+
+                                RowLayout {
+                                    spacing: AuraTheme.spaceXs
+                                    Text {
+                                        text: toolRow.modelData.tool
+                                        font.family: AuraTheme.fontFamily
+                                        font.pixelSize: AuraTheme.fontSmall
+                                        font.weight: Font.DemiBold
+                                        color: AuraTheme.textPrimary
+                                    }
+                                    Rectangle {
+                                        visible: toolRow.modelData.dangerous === true
+                                        radius: AuraTheme.radiusPill
+                                        implicitWidth: dangerLabel.implicitWidth + 14
+                                        implicitHeight: 18
+                                        color: Qt.rgba(0.98, 0.75, 0.14, 0.12)
+                                        border.width: 1
+                                        border.color: Qt.rgba(0.98, 0.75, 0.14, 0.40)
+                                        Text {
+                                            id: dangerLabel
+                                            anchors.centerIn: parent
+                                            text: "опасный"
+                                            font.family: AuraTheme.fontFamily
+                                            font.pixelSize: AuraTheme.fontMicro
+                                            color: AuraTheme.warning
+                                        }
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: toolRow.modelData.description || ""
+                                    font.family: AuraTheme.fontFamily
+                                    font.pixelSize: AuraTheme.fontMicro
+                                    color: AuraTheme.textMuted
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            // Переключатель режима: разрешить / спрашивать / запретить.
+                            RowLayout {
+                                spacing: AuraTheme.spaceXs
+
+                                Repeater {
+                                    model: [
+                                        { mode: "allow", label: "Разрешить" },
+                                        { mode: "ask", label: "Спрашивать" },
+                                        { mode: "deny", label: "Запретить" }
+                                    ]
+
+                                    delegate: GlassButton {
+                                        required property var modelData
+                                        text: modelData.label
+                                        variant: toolRow.modelData.mode === modelData.mode ? "accent" : "quiet"
+                                        implicitHeight: 32
+                                        onClicked: App.setToolPermission(toolRow.modelData.tool, modelData.mode)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

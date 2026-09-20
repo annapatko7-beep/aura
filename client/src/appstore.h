@@ -70,6 +70,10 @@ class AppStore : public QObject {
     Q_PROPERTY(bool ttsImportantOnly READ ttsImportantOnly NOTIFY ttsChanged)
     Q_PROPERTY(bool speaking READ speaking NOTIFY speakingChanged)
     Q_PROPERTY(QStringList ttsVoices READ ttsVoices NOTIFY ttsChanged)
+    // Этап 8: разрешения на инструменты, подтверждения опасных операций, задачи.
+    Q_PROPERTY(QVariantList toolPermissions READ toolPermissions NOTIFY toolPermissionsChanged)
+    Q_PROPERTY(QVariantList confirmations READ confirmations NOTIFY confirmationsChanged)
+    Q_PROPERTY(QVariantList tasks READ tasks NOTIFY tasksChanged)
 
 public:
     explicit AppStore(QObject* parent = nullptr);
@@ -121,6 +125,10 @@ public:
     bool ttsImportantOnly() const { return ttsImportantOnly_; }
     bool speaking() const { return speaking_; }
     QStringList ttsVoices() const { return ttsVoices_; }
+    // Этап 8
+    QVariantList toolPermissions() const { return toolPermissions_; }
+    QVariantList confirmations() const { return confirmations_; }
+    QVariantList tasks() const { return tasks_; }
 
 public slots:
     void login(const QString& email, const QString& password);
@@ -168,6 +176,19 @@ public slots:
     void setTtsRate(qreal rate);                 // -1.0 … 1.0
     void setTtsVolume(qreal volume);             // 0.0 … 1.0
     void setTtsImportantOnly(bool enabled);
+    // Этап 8: разрешения на инструменты (allow | ask | deny).
+    void loadPermissions();
+    void setToolPermission(const QString& tool, const QString& mode);
+    // Этап 8: барьер подтверждения опасных операций.
+    void loadConfirmations();
+    void approveConfirmation(qint64 actionId);   // исполнить отложенное действие
+    void denyConfirmation(qint64 actionId);      // отклонить отложенное действие
+    // Этап 8: задачи и напоминания.
+    void loadTasks();
+    void createTask(const QString& title, const QString& notes, const QString& remindAt);
+    void completeTask(qint64 taskId);
+    void cancelTask(qint64 taskId);
+    void deleteTask(qint64 taskId);
 
 signals:
     void connectedChanged();
@@ -201,6 +222,10 @@ signals:
     // Озвучка (TTS)
     void ttsChanged();
     void speakingChanged();
+    // Этап 8: разрешения, подтверждения, задачи
+    void toolPermissionsChanged();
+    void confirmationsChanged();
+    void tasksChanged();
 
 private:
     void handleEvent(const QString& name, const QJsonObject& payload);
@@ -281,6 +306,10 @@ private:
     bool ttsImportantOnly_ = false;   // озвучивать только важные ответы
     bool speaking_ = false;
     QStringList ttsVoices_;           // доступные голоса платформы
+    // Этап 8: разрешения, подтверждения, задачи
+    QVariantList toolPermissions_;    // каталог инструментов с эффективным mode
+    QVariantList confirmations_;      // отложенные действия (status=pending)
+    QVariantList tasks_;              // задачи пользователя
 };
 
 }  // namespace aura
