@@ -189,6 +189,25 @@ DESIGN_SYSTEM (токены full_mix, 11 компонентов, адаптив�
 TROUBLESHOOTING (симптом → решение по всем слоям). Ранее готовы:
 PROTOCOL (API), SECURITY, TESTING, IOS, DESIGN, AUDIT.
 
+## Production-сборка (этап 16) — ГОТОВО
+
+- Docker: multi-stage образ C++-сервера (debian bookworm, CMake+libpq →
+  slim-рантайм; исправлен контекст — добавлен vendored argon2, тесты в
+  образе не собираются), образ AI-сервиса (python:3.12-slim + psycopg для
+  PG-бэкенда памяти), `.dockerignore` в обоих контекстах.
+- docker-compose: PostgreSQL 16 (schema + seed + миграции при первом
+  старте), AI Service (healthcheck /healthz), C++-сервер (healthcheck
+  порта, старт после healthy-зависимостей); секреты — через `.env`
+  (`AURA_JWT_SECRET`, `AURA_2FA_KEY`, `POSTGRES_PASSWORD`, `AURA_AI_TOKEN`,
+  OpenAI/Google/push — passthrough). Цели Makefile: docker-build/up/down/logs.
+- CI (GitHub Actions): три job'а на каждый push — сборка C++ + ctest,
+  pytest AI-сервиса, сверка протокола iOS + синтаксис e2e. Qt/iOS —
+  локальные проверки (нужны Qt 6 и macOS).
+- Проверено в песочнице: сборка сервера ровно командой из Dockerfile
+  (36/36, бинарник запускается), YAML compose и CI валидны, полный набор
+  тестов зелёный. Сам `docker build` в песочнице недоступен — образы
+  нужно собрать один раз на машине с Docker (`make docker-build`).
+
 ## Desktop и адаптивный UI (этап 12) — ГОТОВО
 
 Реализовано: две раскладки Qt-клиента с мгновенным переключением по ширине

@@ -9,9 +9,11 @@ WORKDIR /src
 COPY CMakeLists.txt ./
 COPY include ./include
 COPY src ./src
-COPY tests ./tests
+# vendored libargon2 — без него не собирается argon2 (см. server/CMakeLists.txt)
+COPY third_party ./third_party
 
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DAURA_BUILD_TESTS=OFF \
     && cmake --build build
 
 FROM debian:bookworm-slim

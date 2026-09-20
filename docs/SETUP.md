@@ -129,12 +129,52 @@ cd ios && xcodegen generate && open Aura.xcodeproj
 `AURA_JWT_SECRET`); в продакшене задайте отдельный `AURA_2FA_KEY` и не
 меняйте его (иначе существующие секреты не расшифруются).
 
-## 8. Проверка установки
+## 8. Production-стек через Docker Compose
+
+Весь серверный стек (PostgreSQL 16 + AI Service + C++-сервер) поднимается
+одной командой; Qt-клиент собирается на хосте (нужен GUI), iOS — на Mac.
+
+```bash
+# .env-файл рядом с docker-compose.yml (в git не коммитить):
+#   AURA_JWT_SECRET=…        AURA_2FA_KEY=…        POSTGRES_PASSWORD=…
+#   AURA_AI_TOKEN=…          OPENAI_API_KEY=…      AURA_LLM_PROVIDER=openai
+#   AURA_PUSH_DRIVER=webhook AURA_PUSH_WEBHOOK_URL=https://gateway/push
+#   AURA_GOOGLE_CLIENT_ID=…  AURA_GOOGLE_CLIENT_SECRET=…
+
+make docker-build   # собрать образы (server: multi-stage CMake+libpq; ai: python:3.12-slim)
+make docker-up      # поднять стек в фоне
+make docker-logs    # логи сервера и AI-сервиса
+make docker-down    # остановить
+```
+
+Что делает compose:
+
+- **postgres** — при первом старте применяет `schema/schema.sql`,
+  `schema/seed.sql` и миграции из `schema/migrations/` (идемпотентно,
+  по алфавиту файлов в `docker-entrypoint-initdb.d`);
+- **ai** — образ с `psycopg` (память через PostgreSQL), healthcheck
+  `GET /healthz`;
+- **server** — образ без компилятора (только `libpq5`), стартует после
+  healthy-зависимостей; healthcheck — проверка порта 9000.
+
+Продакшен-чек-лист: смените `AURA_JWT_SECRET`/`AURA_2FA_KEY`/
+`POSTGRES_PASSWORD` (без них compose честно поднимется с dev-значениями),
+поставьте TLS-терминирующий прокси перед портом 9000 (`wss://`), для
+реального push — шлюз APNs (`AURA_PUSH_DRIVER=webhook`), для почты —
+`AURA_MAIL_DRIVER=http` + `AURA_EMAIL_API_URL`. Бэкап — `pg_dump` тома
+`pgdata`.
+
+## 9. Проверка установки
 
 ```bash
 make check    # тесты Python + C++
 make e2e      # сквозной прогон (серверы должны быть запущены)
 python3 tools/check_ios_protocol.py
 ```
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) на каждый push гоняет
+три job'а: сборка C++ + ctest, pytest AI-сервиса, сверка протокола iOS и
+синтаксис e2e. Qt/iOS в CI не собираются (нужны Qt 6 и macOS) — это
+локальные проверки из [TESTING.md](TESTING.md).
 
 Частые проблемы — [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

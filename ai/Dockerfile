@@ -5,6 +5,9 @@ WORKDIR /app
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+# В контейнере память работает через PostgreSQL (AURA_MEMORY_BACKEND в
+# docker-compose) — драйвер ставим в образ, а не в dev-requirements.
+RUN pip install --no-cache-dir "psycopg[binary]>=3.1"
 
 COPY aura_ai ./aura_ai
 

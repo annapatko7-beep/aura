@@ -8,7 +8,7 @@ PIP     := $(if $(wildcard $(VENV)/bin/pip),$(VENV)/bin/pip,pip3)
 UVICORN := $(if $(wildcard $(VENV)/bin/uvicorn),$(VENV)/bin/uvicorn,uvicorn)
 PG_URI ?= postgresql://postgres:@/postgres?host=$(HOME)/.cache/pgdata
 
-.PHONY: help venv ai-test server-build server-test e2e schema-check ai-run server-run preview check
+.PHONY: help venv ai-test server-build server-test e2e schema-check ai-run server-run preview check docker-build docker-up docker-down docker-logs
 
 help:
 	@echo "Aura — цели:"
@@ -21,6 +21,10 @@ help:
 	@echo "  ai-run        запустить AI-сервис на :8000"
 	@echo "  server-run    запустить C++-сервер на :9000"
 	@echo "  check         всё вышеперечисленное, кроме e2e и *-run"
+	@echo "  docker-build  собрать образы стека (postgres + ai + server)"
+	@echo "  docker-up     поднять стек в фоне"
+	@echo "  docker-down   остановить стек"
+	@echo "  docker-logs   логи сервера и AI-сервиса"
 
 venv:
 	python3 -m venv $(VENV)
@@ -52,3 +56,18 @@ server-run:
 
 check: ai-test server-test
 	@echo "OK: тесты Python и C++ прошли"
+
+# --- production-стек (Docker Compose: postgres + ai + server) --------------
+# Секреты — через окружение или .env-файл compose (см. docs/SETUP.md).
+
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f server ai

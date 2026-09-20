@@ -1,0 +1,66 @@
+# CI Aura: C++-ядро (сборка + unit), Python AI Service, сверка протокола iOS.
+# Qt-клиент и iOS здесь не собираются (нужны Qt 6 / macOS) — их проверки:
+# qmlcachegen и tools/check_ios_protocol.py (см. docs/TESTING.md).
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  cpp:
+    name: C++ сервер — сборка и тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libpq-dev
+
+      - name: Конфигурация
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DAURA_WITH_LIBPQ=ON -DAURA_WITH_CLIENT=OFF -DAURA_BUILD_TESTS=ON
+
+      - name: Сборка
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Unit-тесты
+        # add_test объявлен в server/CMakeLists — тесты живут в build/server.
+        run: ctest --test-dir build/server --output-on-failure
+
+  python:
+    name: Python AI Service — тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Зависимости
+        run: pip install -r ai/requirements.txt
+
+      - name: Тесты
+        run: cd ai && PYTHONPATH=. python -m pytest -q
+
+  protocol:
+    name: Протокол iOS ↔ сервер и синтаксис e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Сверка типов сообщений iOS с хендлерами сервера
+        run: python3 tools/check_ios_protocol.py
+
+      - name: Синтаксис e2e-прогона
+        run: python3 -m py_compile tools/e2e.py
