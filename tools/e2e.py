@@ -878,6 +878,49 @@ async def main() -> int:
         check(gmail_revoked.get("type") == "ok", "revoke: Gmail отключён", gmail_revoked)
 
     # -------------------------------------------------------------- итоги
+    # ---------------------------------------- безопасность (этап 14)
+    print("\n5b. Сценарии безопасности (этап 14)")
+
+    # SQL-инъекция против реального PostgreSQL: текст хранится буквально
+    # (параметризованные запросы), таблица жива.
+    sqli = "'); DROP TABLE memories; -- <script>alert(1)</script>"
+    evil_memory = await anna.call("memory.add", {"text": sqli, "kind": "fact"})
+    check(evil_memory.get("payload", {}).get("saved", 0) == 1,
+          "SQLi-текст сохранён в память буквально", evil_memory.get("payload"))
+    memory_back = await anna.call("memory.list", {"query": "DROP"})
+    texts = [m.get("text") for m in memory_back.get("payload", {}).get("entries", [])]
+    check(sqli in texts, "SQLi round-trip без искажений", texts[:1])
+    alive = await anna.call("memory.list", {})
+    check(alive.get("type") == "ok", "таблица memories жива после инъекции",
+          alive.get("type"))
+
+    # Инъекция в поиск пользователей: пустой результат, без ошибки.
+    inject_search = await anna.call("users.search", {"query": "' OR '1'='1"})
+    check(inject_search.get("type") == "ok"
+          and len(inject_search.get("payload", {}).get("users", [])) == 0,
+          "users.search: инъекция даёт пустой результат", inject_search.get("payload"))
+
+    # Изоляция памяти: Аня не видит воспоминания Анны.
+    anya_memory = await anya.call("memory.list", {})
+    anya_texts = [m.get("text") for m in anya_memory.get("payload", {}).get("entries", [])]
+    check(sqli not in anya_texts, "Аня не видит память Анны", len(anya_texts))
+
+    # Брутфорс: серия неверных паролей блокирует вход по email.
+    for _ in range(8):
+        await anya.call("auth.login", {"email": f"anna.{RUN}@example.com",
+                                       "password": "wrong-password"})
+    blocked = await anya.call("auth.login", {"email": f"anna.{RUN}@example.com",
+                                             "password": "aura1234"})
+    check(blocked.get("code") == "forbidden",
+          "вход заблокирован после серии неверных паролей", blocked.get("code"))
+
+    # sessions.list не отдаёт ни токенов, ни их хэшей.
+    sessions_now = await anna.call("sessions.list", {})
+    session_items_now = sessions_now.get("payload", {}).get("sessions", [])
+    check(len(session_items_now) >= 1
+          and all("token" not in item for item in session_items_now),
+          "sessions.list без токенов", session_items_now[:1])
+
     print("\n6. Состояние сервера")
     info = await anna.call("server.info")
     server_payload = info.get("payload", {})

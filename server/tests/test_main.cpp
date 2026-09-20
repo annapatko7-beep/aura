@@ -1847,6 +1847,182 @@ TEST(server_push_devices) {
              std::size_t(0));
 }
 
+// --- Этап 14: сценарии безопасности -----------------------------------------
+
+TEST(security_brute_force_throttle) {
+    // Порог снижаем до 3, окно — 60 с (Fixture читает Config::fromEnv()).
+    ::setenv("AURA_MAX_LOGIN_ATTEMPTS", "3", 1);
+    ::setenv("AURA_LOGIN_WINDOW", "60", 1);
+    {
+        Fixture fixture;
+        auto session = fixture.makeSession("brute");
+        fixture.registerUser(session, "brute@example.com", "Брут");
+
+        Json login = Json::object();
+        login.set("email", Json("brute@example.com"));
+        login.set("password", Json("неверный-пароль"));
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            const Json failed = fixture.call(session, "auth.login", login);
+            CHECK_EQ(failed.getString("code"), std::string("unauthorized"));
+        }
+
+        // Превышен порог: даже верный пароль заблокирован до конца окна.
+        login.set("password", Json("aura1234"));
+        const Json blocked = fixture.call(session, "auth.login", login);
+        CHECK_EQ(blocked.getString("code"), std::string("forbidden"));
+
+        // Регистрация под перебором тоже блокируется (тот же счётчик адреса).
+        Json reg = Json::object();
+        reg.set("email", Json("fresh@example.com"));
+        reg.set("password", Json("aura1234"));
+        reg.set("display_name", Json("Фреш"));
+        CHECK_EQ(fixture.call(session, "auth.register", reg).getString("code"),
+                 std::string("forbidden"));
+    }
+    ::unsetenv("AURA_MAX_LOGIN_ATTEMPTS");
+    ::unsetenv("AURA_LOGIN_WINDOW");
+}
+
+TEST(security_injection_payloads_are_literal) {
+    Fixture fixture;
+    auto session = fixture.makeSession("inject");
+    fixture.registerUser(session, "inject@example.com", "Инъекций");
+
+    // SQL-инъекция в память: текст хранится и возвращается буквально.
+    // kind — из CHECK схемы (fact|preference|schedule|contact).
+    const std::string sqli = "'); DROP TABLE memories; -- <script>alert(1)</script>";
+    Json add = Json::object();
+    add.set("text", Json(sqli));
+    add.set("kind", Json("fact"));
+    CHECK_EQ(fixture.call(session, "memory.add", add).get("payload").getInt("saved"), 1);
+    const Json entries =
+        integration::payloadOf(fixture.call(session, "memory.list")).get("entries");
+    bool foundLiteral = false;
+    for (const auto& entry : entries.items()) {
+        if (entry.getString("text") == sqli) foundLiteral = true;
+    }
+    CHECK(foundLiteral);
+
+    // Задача с кавычками и точкой с запятой — round-trip без искажений.
+    Json task = Json::object();
+    task.set("title", Json("купить 'молоко'; удалить \"всё\""));
+    const Json created = fixture.call(session, "tasks.create", task);
+    CHECK_EQ(created.get("payload").getString("title"),
+             std::string("купить 'молоко'; удалить \"всё\""));
+
+    // Поиск пользователей с инъекцией: пустой результат, без падения.
+    Json search = Json::object();
+    search.set("query", Json("' OR '1'='1"));
+    const Json found = fixture.call(session, "users.search", search);
+    CHECK_EQ(found.getString("type"), std::string("ok"));
+    CHECK_EQ(found.get("payload").get("users").items().size(), std::size_t(0));
+
+    // Чужой email с инъекцией не входит (и не ломает хранилище).
+    Json login = Json::object();
+    login.set("email", Json("inject@example.com' OR '1'='1"));
+    login.set("password", Json("aura1234"));
+    CHECK_EQ(fixture.call(session, "auth.login", login).getString("type"), std::string("error"));
+}
+
+TEST(security_xss_message_roundtrip_is_literal) {
+    Fixture fixture;
+    auto anna = fixture.makeSession("xss-anna");
+    auto bob = fixture.makeSession("xss-bob");
+    fixture.registerUser(anna, "xanna@example.com", "Анна");
+    fixture.registerUser(bob, "xbob@example.com", "Боб");
+
+    Json open = Json::object();
+    open.set("contact", Json("xbob@example.com"));
+    const Json opened = fixture.call(anna, "chat.open", open);
+    const long long chat = integration::payloadOf(opened).get("chat").getInt("id");
+    CHECK(chat > 0);
+
+    // XSS-payload доставляется как текст: сервер ничего не исполняет и не
+    // экранирует — клиенты (QML Text, SwiftUI Text) HTML не рендерят.
+    const std::string xss = "<script>alert('xss')</script><img src=x onerror=alert(2)>";
+    Json send = Json::object();
+    send.set("chat_id", Json(chat));
+    send.set("body", Json(xss));
+    CHECK_EQ(fixture.call(anna, "chat.send", send).getString("type"), std::string("ok"));
+
+    Json history = Json::object();
+    history.set("chat_id", Json(chat));
+    const Json messages =
+        integration::payloadOf(fixture.call(bob, "chat.history", history)).get("messages");
+    bool sawLiteral = false;
+    for (const auto& message : messages.items()) {
+        if (message.getString("body") == xss) sawLiteral = true;
+    }
+    CHECK(sawLiteral);
+}
+
+TEST(security_cross_user_isolation) {
+    Fixture fixture;
+    auto anna = fixture.makeSession("iso-anna");
+    auto bob = fixture.makeSession("iso-bob");
+    fixture.registerUser(anna, "isoanna@example.com", "Анна");
+    fixture.registerUser(bob, "isobob@example.com", "Боб");
+
+    // Память Анны не видна Бобу.
+    Json add = Json::object();
+    add.set("text", Json("Секретный рецепт Анны"));
+    add.set("kind", Json("preference"));
+    CHECK_EQ(fixture.call(anna, "memory.add", add).get("payload").getInt("saved"), 1);
+    const Json bobMemory =
+        integration::payloadOf(fixture.call(bob, "memory.list")).get("entries");
+    CHECK_EQ(bobMemory.items().size(), std::size_t(0));
+
+    // Настройки Анны не видны Бобу (у него свои значения по умолчанию).
+    Json prefs = Json::object();
+    prefs.set("city", Json("Керкраде"));
+    fixture.call(anna, "prefs.set", prefs);
+    CHECK_EQ(integration::payloadOf(fixture.call(bob, "prefs.get")).getString("city"),
+             std::string(""));
+
+    // Задачи и уведомления тоже изолированы.
+    Json task = Json::object();
+    task.set("title", Json("Задача Анны"));
+    fixture.call(anna, "tasks.create", task);
+    CHECK_EQ(integration::payloadOf(fixture.call(bob, "tasks.list"))
+                 .get("tasks")
+                 .items()
+                 .size(),
+             std::size_t(0));
+    CHECK_EQ(integration::payloadOf(fixture.call(bob, "notifications.list"))
+                 .get("notifications")
+                 .items()
+                 .size(),
+             std::size_t(1));  // только его собственный login.new
+
+    // Чужой чат недоступен: у Анны есть чат с Бобом, список у обоих по одному.
+    Json open = Json::object();
+    open.set("contact", Json("isobob@example.com"));
+    const Json annaChat = fixture.call(anna, "chat.open", open);
+    CHECK_EQ(annaChat.getString("type"), std::string("ok"));
+    const Json list = integration::payloadOf(fixture.call(anna, "chat.list"));
+    CHECK_EQ(list.get("chats").items().size(), std::size_t(1));
+    const Json bobList = integration::payloadOf(fixture.call(bob, "chat.list"));
+    CHECK_EQ(bobList.get("chats").items().size(), std::size_t(1));
+}
+
+TEST(security_sessions_list_hides_secrets) {
+    Fixture fixture;
+    auto session = fixture.makeSession("leak");
+    fixture.registerUser(session, "leak@example.com", "Лик");
+
+    const Json sessions =
+        integration::payloadOf(fixture.call(session, "sessions.list")).get("sessions");
+    CHECK(sessions.items().size() >= 1);
+    for (const auto& item : sessions.items()) {
+        // Ни токена, ни его хэша, ни jwt_id наружу.
+        CHECK(item.contains("token") == false);
+        CHECK(item.contains("token_hash") == false);
+        CHECK(item.contains("jwt_id") == false);
+        CHECK(item.contains("refresh_token") == false);
+        CHECK(!item.getString("id").empty());
+    }
+}
+
 int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);  // сессии в тестах пишут в socketpair
     std::cout.setf(std::ios::unitbuf);
