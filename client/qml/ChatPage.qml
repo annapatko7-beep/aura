@@ -13,9 +13,17 @@ Item {
     id: page
 
     property int chatId: 0
+    // true — страница встроена в desktop-оболочку (master-detail): без кнопок
+    // «назад»/«настройки» (навигация — через рельс оболочки).
+    property bool embedded: false
 
     signal back()
     signal openSettings()
+
+    // История чата грузится при открытии и при смене выбранного чата
+    // (раньше selectChat не вызывался — существующие чаты открывались пустыми).
+    Component.onCompleted: if (page.chatId > 0) App.selectChat(page.chatId)
+    onChatIdChanged: if (page.chatId > 0) App.selectChat(page.chatId)
 
     ColumnLayout {
         anchors.fill: parent
@@ -33,6 +41,7 @@ Item {
                 spacing: AuraTheme.spaceMd
 
                 GlassButton {
+                    visible: !page.embedded
                     variant: "quiet"
                     text: ""
                     glyph: "←"
@@ -65,6 +74,7 @@ Item {
                 }
 
                 GlassButton {
+                    visible: !page.embedded
                     variant: "quiet"
                     glyph: "⚙"
                     text: ""

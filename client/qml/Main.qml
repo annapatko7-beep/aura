@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Effects
 import QtQuick.Layouts
+import QtCore
 import Aura
 
 /*
@@ -9,6 +10,10 @@ import Aura
 
   Фон — тёмный графит с двумя размытыми «сияниями»; он же служит backdrop'ом
   для всех стеклянных панелей (GlassSurface размывает именно его).
+
+  Адаптивность (этап 12): узкое окно (< AuraTheme.breakpointWide) — стековая
+  навигация ChatsPage → ChatPage/SettingsPage; широкое — DesktopShell
+  (рельс + master-detail). Выбранный чат переживает смену раскладки.
 */
 ApplicationWindow {
     id: window
@@ -20,6 +25,20 @@ ApplicationWindow {
     visible: true
     color: AuraTheme.bgDeep
     title: App && App.authenticated ? "Aura — " + App.userName : "Aura"
+
+    // Desktop-учтивость: запоминаем геометрию окна между запусками.
+    Settings {
+        property alias winX: window.x
+        property alias winY: window.y
+        property alias winWidth: window.width
+        property alias winHeight: window.height
+    }
+
+    // Широкая раскладка — только для авторизованного пользователя.
+    readonly property bool wideLayout: App !== null && App.authenticated
+                                       && window.width >= AuraTheme.breakpointWide
+    // Общий выбранный чат: стек и оболочка переключаются без потери контекста.
+    property int currentChatId: 0
 
     // ------------------------------------------------------------ фон
     Item {
@@ -102,59 +121,73 @@ ApplicationWindow {
     }
 
     // -------------------------------------------------------- маршрутизация
-    StackView {
-        id: stack
+    // Loader сам переключает раскладку при смене авторизации и ширины окна
+    // (этап 12). LoginPage больше не рулит переходами: App.authenticated
+    // изменился — binding пересобрал контент.
+    Loader {
+        id: rootLoader
         anchors.fill: parent
-        initialItem: App && App.authenticated ? chatsPage : loginPage
-
-        popEnter: Transition {
-            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: AuraTheme.moveMs }
-        }
-        pushEnter: Transition {
-            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: AuraTheme.moveMs }
-            NumberAnimation { property: "x"; from: 40; to: 0; duration: AuraTheme.moveMs; easing.type: Easing.OutCubic }
-        }
+        sourceComponent: !App || !App.authenticated ? loginPage
+                         : (window.wideLayout ? desktopShell : compactStack)
     }
 
     Component {
         id: loginPage
         LoginPage {
-            onLoggedIn: stack.replace(null, chatsPage)
+            // После входа Loader переключится сам (binding на authenticated).
         }
     }
 
+    // Узкое окно: стековая навигация (как до этапа 12).
     Component {
-        id: chatsPage
-        ChatsPage {
-            onOpenChat: function(chatId) { stack.push(chatPage, { chatId: chatId }) }
-            onOpenSettings: stack.push(settingsPage)
-        }
-    }
+        id: compactStack
+        StackView {
+            id: stack
+            initialItem: stackChatsPage
 
-    Component {
-        id: chatPage
-        ChatPage {
-            property int chatId: 0
-            onBack: stack.pop()
-            onOpenSettings: stack.push(settingsPage)
-        }
-    }
-
-    Component {
-        id: settingsPage
-        SettingsPage {
-            onBack: stack.pop()
-            onLoggedOut: stack.replace(null, loginPage)
-        }
-    }
-
-    // Смена состояния авторизации из C++ (например, токен истёк)
-    Connections {
-        target: App
-        function onAuthenticatedChanged() {
-            if (!App.authenticated && stack.currentItem !== null) {
-                stack.replace(null, loginPage)
+            popEnter: Transition {
+                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: AuraTheme.moveMs }
             }
+            pushEnter: Transition {
+                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: AuraTheme.moveMs }
+                NumberAnimation { property: "x"; from: 40; to: 0; duration: AuraTheme.moveMs; easing.type: Easing.OutCubic }
+            }
+
+            Component {
+                id: stackChatsPage
+                ChatsPage {
+                    onOpenChat: function(chatId) {
+                        window.currentChatId = chatId
+                        stack.push(stackChatPage, { chatId: chatId })
+                    }
+                    onOpenSettings: stack.push(stackSettingsPage)
+                }
+            }
+
+            Component {
+                id: stackChatPage
+                ChatPage {
+                    // chatId объявлен в самом ChatPage — push передаёт значение.
+                    onBack: stack.pop()
+                    onOpenSettings: stack.push(stackSettingsPage)
+                }
+            }
+
+            Component {
+                id: stackSettingsPage
+                SettingsPage {
+                    onBack: stack.pop()
+                }
+            }
+        }
+    }
+
+    // Широкое окно: desktop-оболочка (рельс + master-detail).
+    Component {
+        id: desktopShell
+        DesktopShell {
+            selectedChatId: window.currentChatId
+            onChatSelected: function(chatId) { window.currentChatId = chatId }
         }
     }
 

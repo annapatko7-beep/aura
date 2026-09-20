@@ -12,6 +12,9 @@ Item {
     signal back()
     signal loggedOut()
 
+    // true — страница встроена в desktop-оболочку: кнопка «назад» не нужна.
+    property bool embedded: false
+
     property var prefs: App ? App.preferences : ({})
 
     Flickable {
@@ -32,6 +35,7 @@ Item {
                 spacing: AuraTheme.spaceMd
 
                 GlassButton {
+                    visible: !page.embedded
                     variant: "quiet"
                     glyph: "←"
                     text: ""

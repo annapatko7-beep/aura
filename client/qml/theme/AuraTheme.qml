@@ -56,6 +56,11 @@ QtObject {
     readonly property int spaceLg: 24
     readonly property int spaceXl: 32
 
+    // --- адаптивность (этап 12): узкое окно — стек, широкое — desktop -----
+    readonly property int breakpointWide: 1120   // ≥ — рельс + master-detail
+    readonly property int railWidth: 76          // ширина навигационного рельса
+    readonly property int masterWidth: 340       // ширина колонки списка чатов
+
     // --- тень (0 8px 32px rgba(0,0,0,0.35)) -----------------------------
     readonly property color shadowColor: "#59000000"
     readonly property int   shadowBlur:  32

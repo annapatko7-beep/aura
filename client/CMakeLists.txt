@@ -34,6 +34,7 @@ qt_add_qml_module(aura-client
         qml/ChatsPage.qml
         qml/ChatPage.qml
         qml/SettingsPage.qml
+        qml/DesktopShell.qml
         qml/theme/AuraTheme.qml
         qml/components/GlassSurface.qml
         qml/components/GlassPanel.qml
@@ -44,6 +45,7 @@ qt_add_qml_module(aura-client
         qml/components/VoicePanel.qml
         qml/components/ConfirmationPanel.qml
         qml/components/TasksPanel.qml
+        qml/components/ChatList.qml
 )
 
 target_link_libraries(aura-client PRIVATE
