@@ -94,18 +94,23 @@ Whisper-бэкенд при `AURA_STT_URL`/`AURA_STT_API_KEY`), WS-метод
 отмена, правка расшифровки, автоотправка) и настройки голоса/озвучки.
 iOS-часть (Speech Framework on-device, AVSpeechSynthesizer) — в этапе 10.
 
-## iOS-приложение (этап 10) — нативный Swift
+## iOS-приложение (этап 10) — ГОТОВО — нативный Swift
 
-- SwiftUI, тот же WS-протокол, общий `AuraKit` (Swift Package): транспорт,
-  модели, крипто-клиент JWT.
-- App Intents + Siri Shortcuts («Hey Siri, open Aura voice input»),
-  deep link `aura://voice`, `aura://chats/{id}` (Universal Links в проде).
-- **Back Tap напрямую недоступен сторонним приложениям** — в разделе
-  Quick Actions: пошаговая инструкция (Команды → команда Aura → Универсальный
-  доступ → Касание → Касание сзади → назначить).
-- Push: APNs ( Notification Service Extension ), Live Activities для активных
-  переговоров, виджет «быстрый запрос Ауре», Share Extension.
-- Календарь/напоминания: EventKit с запросом разрешения.
+Реализовано: SwiftUI-приложение (`ios/Aura`) + общий Swift-пакет **AuraKit**
+(WS-транспорт, протокол, AuraClient, Keychain, deep links); вход/2FA, чаты,
+«Спросить Ауру», задачи (+ экспорт в напоминания iOS через EventKit по
+кнопке), подтверждения, разрешения, интеграции Google (Safari → `aura://oauth`),
+гибридный голос (SFSpeechRecognizer + серверный STT-fallback, озвучка
+AVSpeechSynthesizer). App Intents «Спросить Ауру»/«Создать задачу» + фразы
+Siri; deep links `aura://voice|chats/{id}|ask|tasks|settings|oauth`.
+**Back Tap напрямую недоступен сторонним приложениям** — в Quick Actions:
+пошаговая инструкция (Универсальный доступ → Касание → Касание сзади →
+Команды → «Спросить Ауру»). Тесты: AuraKitTests (`swift test`), AuraTests;
+сверка протокола — `tools/check_ios_protocol.py`. Подробности — docs/IOS.md.
+
+Осталось в этапе 13: Push (APNs, Notification Service Extension), Live
+Activities для активных переговоров, виджет «быстрый запрос Ауре», Share
+Extension.
 
 ## Интеграции (этап 9) — ГОТОВО
 

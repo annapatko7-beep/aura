@@ -3,6 +3,10 @@
 Транспорт — WebSocket (RFC 6455) поверх TCP. Все сообщения — JSON в текстовых
 фреймах. Один TCP-сокет = одна `Session` на сервере.
 
+Клиенты: Qt/QML (desktop), Swift/SwiftUI (iOS, этап 10 — см. docs/IOS.md),
+Python (e2e). Протокол один на всех; сверка имён обработчиков iOS-клиента —
+`tools/check_ios_protocol.py`.
+
 ## Конверт
 
 ```jsonc
