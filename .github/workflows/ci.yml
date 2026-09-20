@@ -1,6 +1,7 @@
-# CI Aura: C++-ядро (сборка + unit), Python AI Service, сверка протокола iOS.
-# Qt-клиент и iOS здесь не собираются (нужны Qt 6 / macOS) — их проверки:
-# qmlcachegen и tools/check_ios_protocol.py (см. docs/TESTING.md).
+# CI Aura: C++-ядро (сборка + unit), Python AI Service, сверка протокола
+# iOS/Android, JVM-тесты AuraKit (Android). Qt-клиент и iOS здесь не
+# собираются (нужны Qt 6 / macOS), APK — нужен Android SDK (Android Studio);
+# локальные проверки: qmlcachegen и tools/check_*_protocol.py (docs/TESTING.md).
 
 name: CI
 
@@ -50,7 +51,7 @@ jobs:
         run: cd ai && PYTHONPATH=. python -m pytest -q
 
   protocol:
-    name: Протокол iOS ↔ сервер и синтаксис e2e
+    name: Протокол iOS/Android ↔ сервер и синтаксис e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,5 +63,33 @@ jobs:
       - name: Сверка типов сообщений iOS с хендлерами сервера
         run: python3 tools/check_ios_protocol.py
 
+      - name: Сверка типов сообщений Android с хендлерами сервера
+        run: python3 tools/check_android_protocol.py
+
       - name: Синтаксис e2e-прогона
         run: python3 -m py_compile tools/e2e.py
+
+  android:
+    name: Android — JVM-тесты AuraKit (протокол без SDK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Модуль :aurakit — чистый Kotlin/JVM (протокол, deep links), поэтому
+      # его тесты идут в CI без Android SDK. Gradle нужен только чтобы
+      # сгенерировать wrapper нужной версии (в репозитории wrapper не лежит).
+      - name: Gradle wrapper
+        working-directory: android
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gradle
+          gradle wrapper --gradle-version 8.7
+
+      - name: Тесты AuraKit
+        working-directory: android
+        run: ./gradlew :aurakit:test --no-daemon

@@ -627,6 +627,33 @@ async def main() -> int:
     check(revoked_device.get("payload", {}).get("revoked") is True,
           "devices.push.revoke отозвал устройство", revoked_device.get("payload"))
 
+    # Этап 11 (Android): платформа 'fcm' → конверт с секцией fcm (FCM HTTP v1).
+    fcm_reg = await anna.call("devices.push.register",
+                              {"platform": "fcm", "token": "e2e-fcm-device-1"})
+    fcm_device_id = fcm_reg.get("payload", {}).get("id", 0)
+    check(fcm_reg.get("type") == "ok" and fcm_device_id > 0,
+          "devices.push.register принял fcm-токен", fcm_reg)
+    envelopes_before_fcm = len(push_mock.envelopes) if push_mock else 0
+    await anna.call("tasks.create", {"title": "Проверить FCM",
+                                     "remind_at": "2020-01-02T00:00:00.000Z"})
+    await anna.call("tasks.due", {})
+    await asyncio.sleep(0.3)
+    if push_mock is not None:
+        fcm_envelopes = [e for e in push_mock.envelopes[envelopes_before_fcm:]
+                         if e.get("platform") == "fcm"]
+        check(len(fcm_envelopes) >= 1, "push-шлюз получил fcm-конверт",
+              len(push_mock.envelopes) - envelopes_before_fcm)
+        if fcm_envelopes:
+            message = fcm_envelopes[-1].get("fcm", {}).get("message", {})
+            check(message.get("token") == "e2e-fcm-device-1"
+                  and message.get("notification", {}).get("title") == "Напоминание"
+                  and message.get("android", {}).get("notification", {})
+                      .get("channel_id") == "aura"
+                  and "url" in fcm_envelopes[-1].get("fcm", {}),
+                  "fcm-конверт: token, notification, android.channel_id, url",
+                  fcm_envelopes[-1])
+    await anna.call("devices.push.revoke", {"id": fcm_device_id})
+
     # ------------------------------------------------------------ речь (STT)
     print("\n3b. Распознавание речи (C++-сервер → Python AI Service)")
 

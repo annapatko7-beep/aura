@@ -8,7 +8,7 @@ PIP     := $(if $(wildcard $(VENV)/bin/pip),$(VENV)/bin/pip,pip3)
 UVICORN := $(if $(wildcard $(VENV)/bin/uvicorn),$(VENV)/bin/uvicorn,uvicorn)
 PG_URI ?= postgresql://postgres:@/postgres?host=$(HOME)/.cache/pgdata
 
-.PHONY: help venv ai-test server-build server-test e2e schema-check ai-run server-run preview check docker-build docker-up docker-down docker-logs
+.PHONY: help venv ai-test server-build server-test e2e schema-check ai-run server-run preview check protocol-check docker-build docker-up docker-down docker-logs
 
 help:
 	@echo "Aura — цели:"
@@ -20,6 +20,7 @@ help:
 	@echo "  schema-check  применить schema.sql к PostgreSQL из PG_URI"
 	@echo "  ai-run        запустить AI-сервис на :8000"
 	@echo "  server-run    запустить C++-сервер на :9000"
+	@echo "  protocol-check сверка протокола iOS/Android с сервером + синтаксис e2e"
 	@echo "  check         всё вышеперечисленное, кроме e2e и *-run"
 	@echo "  docker-build  собрать образы стека (postgres + ai + server)"
 	@echo "  docker-up     поднять стек в фоне"
@@ -54,8 +55,13 @@ server-run:
 	AURA_DATABASE_URL="$(PG_URI)" AURA_AI_URL=http://127.0.0.1:8000 \
 	  ./build/server/aura-server
 
-check: ai-test server-test
-	@echo "OK: тесты Python и C++ прошли"
+protocol-check:
+	$(PY) tools/check_ios_protocol.py
+	$(PY) tools/check_android_protocol.py
+	$(PY) -m py_compile tools/e2e.py
+
+check: ai-test server-test protocol-check
+	@echo "OK: тесты Python и C++ и сверка протокола прошли"
 
 # --- production-стек (Docker Compose: postgres + ai + server) --------------
 # Секреты — через окружение или .env-файл compose (см. docs/SETUP.md).

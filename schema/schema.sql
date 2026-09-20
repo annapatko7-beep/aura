@@ -333,7 +333,7 @@ CREATE TABLE IF NOT EXISTS push_devices (
     id           BIGSERIAL     PRIMARY KEY,
     user_id      BIGINT        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     platform     TEXT          NOT NULL DEFAULT 'apns'
-                 CHECK (platform IN ('apns', 'webhook', 'dev')),
+                 CHECK (platform IN ('apns', 'fcm', 'webhook', 'dev')),
     token        TEXT          NOT NULL,
     enabled      BOOLEAN       NOT NULL DEFAULT TRUE,
     created_at   TIMESTAMPTZ   NOT NULL DEFAULT now(),

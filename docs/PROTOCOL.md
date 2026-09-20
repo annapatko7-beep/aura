@@ -4,8 +4,9 @@
 фреймах. Один TCP-сокет = одна `Session` на сервере.
 
 Клиенты: Qt/QML (desktop), Swift/SwiftUI (iOS, этап 10 — см. docs/IOS.md),
-Python (e2e). Протокол один на всех; сверка имён обработчиков iOS-клиента —
-`tools/check_ios_protocol.py`.
+Kotlin/Compose (Android, этап 11 — см. docs/ANDROID.md), Python (e2e).
+Протокол один на всех; сверка имён обработчиков мобильных клиентов —
+`tools/check_ios_protocol.py` и `tools/check_android_protocol.py`.
 
 ## Конверт
 
@@ -285,9 +286,11 @@ Access-токен автоматически обновляется по `refres
 операция ждёт решения), `a2a.proposal` (другой агент начал переговоры),
 `login.new` (новый вход), `twofactor.enabled` / `twofactor.disabled`
 (изменение 2FA). Push-доставка — через устройства в `push_devices`
-(платформы `apns` | `webhook` | `dev`); APNs-конверт уходит во внешний шлюз
-(`AURA_PUSH_DRIVER=webhook`, `AURA_PUSH_WEBHOOK_URL`), который подписывает
-JWT и форвардит запрос в APNs — сам C++-сервер TLS/HTTP2 не делает.
+(платформы `apns` | `fcm` | `webhook` | `dev`); платформенный конверт
+уходит во внешний шлюз (`AURA_PUSH_DRIVER=webhook`,
+`AURA_PUSH_WEBHOOK_URL`), который подписывает ключи провайдера (JWT для
+APNs, OAuth2 сервисного аккаунта для FCM) и форвардит запрос — сам
+C++-сервер TLS/HTTP2 не делает и ключи провайдеров не хранит.
 Тихие часы и отключённые виды читаются из настроек пользователя:
 `prefs.notifications = {"quiet_hours": {"start":"22:00","end":"08:00"},
 "muted_kinds": ["login.new"]}` (время UTC; гасят только push, in-app
@@ -302,11 +305,25 @@ JWT и форвардит запрос в APNs — сам C++-сервер TLS/H
 | `devices.push.revoke` | `id` | `id`, `revoked`; чужое/несуществующее → `not_found` |
 
 Событие: `notification.new` (владельцу; payload — запись уведомления).
-Push-конверт для шлюза: `{platform, token, notification_id, kind, apns:
-{url, headers: {apns-topic, apns-push-type}, payload: {aps: {alert, badge,
-sound}, kind, data}}}`. Переменные окружения: `AURA_PUSH_DRIVER`
-(`dev`|`webhook`), `AURA_PUSH_WEBHOOK_URL`, `AURA_APNS_TOPIC`
-(`ai.aura.app`), `AURA_APNS_URL` (`https://api.push.apple.com`).
+Push-конверт для шлюза: `{platform, token, notification_id, kind, …}`, где
+платформенная секция зависит от `platform`:
+
+- `apns` (и устройства без специальной платформы):
+  `apns: {url, headers: {apns-topic, apns-push-type}, payload: {aps:
+  {alert, badge, sound}, kind, data}}`;
+- `fcm` (Android, этап 11): `fcm: {url, message: {token, notification:
+  {title, body}, android: {priority, notification: {channel_id: "aura",
+  sound}}, data: {kind, notification_id, data}}}` — тело готово к
+  `POST {fcm.url}` (FCM HTTP v1) с заголовком `Authorization: Bearer
+  <OAuth2-токен сервисного аккаунта>`; значения `data` — строки
+  (требование FCM), полезная нагрузка уведомления сериализуется в
+  `data.data`.
+
+Переменные окружения: `AURA_PUSH_DRIVER` (`dev`|`webhook`),
+`AURA_PUSH_WEBHOOK_URL`, `AURA_APNS_TOPIC` (`ai.aura.app`), `AURA_APNS_URL`
+(`https://api.push.apple.com`), `AURA_FCM_URL`
+(`https://fcm.googleapis.com/v1/projects/aura/messages:send` — замените
+`aura` на id вашего проекта Firebase).
 
 ## HTTP API Python AI Service
 

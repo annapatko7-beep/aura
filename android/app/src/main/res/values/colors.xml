@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Токены дизайн-системы (docs/DESIGN_SYSTEM.md), цвета окна/иконки. -->
+    <color name="aura_bg_deep">#0D0D0F</color>
+    <color name="aura_accent">#7C6AFF</color>
+</resources>

@@ -82,8 +82,8 @@ long long NotificationsManager::unreadCount(long long userId) const {
 NotificationsManager::Result NotificationsManager::registerDevice(long long userId,
                                                                   const std::string& platform,
                                                                   const std::string& token) {
-    if (platform != "apns" && platform != "webhook" && platform != "dev") {
-        return Result::failure("bad_request", "platform: apns | webhook | dev");
+    if (platform != "apns" && platform != "fcm" && platform != "webhook" && platform != "dev") {
+        return Result::failure("bad_request", "platform: apns | fcm | webhook | dev");
     }
     if (token.empty()) return Result::failure("bad_request", "нужен token устройства");
     long long id = 0;
@@ -150,7 +150,7 @@ bool NotificationsManager::kindMuted(long long userId, const std::string& kind) 
 void NotificationsManager::deliverPush(const NotificationRecord& record, long long badge) {
     for (const auto& device : database_.db().listPushDevices(record.userId)) {
         if (!device.enabled || device.token.empty()) continue;
-        const Json envelope = apnsEnvelope(device, record, badge);
+        const Json envelope = pushEnvelope(device, record, badge);
 
         if (config_.pushDriver == "webhook" && !config_.pushWebhookUrl.empty()) {
             std::string error;
@@ -175,11 +175,51 @@ void NotificationsManager::deliverPush(const NotificationRecord& record, long lo
     }
 }
 
-Json NotificationsManager::apnsEnvelope(const PushDeviceRecord& device,
+Json NotificationsManager::pushEnvelope(const PushDeviceRecord& device,
                                         const NotificationRecord& record,
                                         long long badge) const {
-    // Формат готов к форварду в APNs: шлюзу остаётся подписать JWT и отправить
-    // POST {apns.url} с заголовками apns.headers и телом apns.payload.
+    Json envelope = Json::object();
+    envelope.set("platform", Json(device.platform));
+    envelope.set("token", Json(device.token));
+    envelope.set("notification_id", Json(record.id));
+    envelope.set("kind", Json(record.kind));
+
+    if (device.platform == "fcm") {
+        // Android/FCM: тело готово к форварду в FCM HTTP v1 API — шлюзу
+        // остаётся получить OAuth2-токен сервисного аккаунта и отправить
+        // POST {fcm.url} с заголовком Authorization: Bearer <токен>.
+        Json notification = Json::object();
+        notification.set("title", Json(record.title));
+        notification.set("body", Json(record.body));
+
+        Json androidNotification = Json::object();
+        androidNotification.set("channel_id", Json("aura"));
+        androidNotification.set("sound", Json("default"));
+
+        Json androidConfig = Json::object();
+        androidConfig.set("priority", Json("high"));
+        androidConfig.set("notification", androidNotification);
+
+        Json message = Json::object();
+        message.set("token", Json(device.token));
+        message.set("notification", notification);
+        message.set("android", androidConfig);
+        Json data = Json::object();
+        data.set("kind", Json(record.kind));
+        data.set("notification_id", Json(record.id));
+        data.set("data", record.payload.dump());
+        message.set("data", data);
+
+        Json fcm = Json::object();
+        fcm.set("url", Json(config_.fcmUrl));
+        fcm.set("message", message);
+        envelope.set("fcm", fcm);
+        return envelope;
+    }
+
+    // APNs (и dev/webhook без специальной платформы): формат готов к форварду
+    // в APNs — шлюзу остаётся подписать JWT и отправить POST {apns.url}
+    // с заголовками apns.headers и телом apns.payload.
     Json aps = Json::object();
     Json alert = Json::object();
     alert.set("title", Json(record.title));
@@ -202,11 +242,6 @@ Json NotificationsManager::apnsEnvelope(const PushDeviceRecord& device,
     apns.set("headers", headers);
     apns.set("payload", apnsPayload);
 
-    Json envelope = Json::object();
-    envelope.set("platform", Json(device.platform));
-    envelope.set("token", Json(device.token));
-    envelope.set("notification_id", Json(record.id));
-    envelope.set("kind", Json(record.kind));
     envelope.set("apns", apns);
     return envelope;
 }

@@ -1847,6 +1847,29 @@ TEST(server_push_devices) {
              std::size_t(0));
 }
 
+TEST(server_push_devices_fcm) {
+    // Этап 11 (Android): платформа 'fcm' принимается наравне с 'apns'.
+    Fixture fixture;
+    auto session = fixture.makeSession("push-fcm");
+    fixture.registerUser(session, "android@example.com", "Андроид");
+
+    Json reg = Json::object();
+    reg.set("platform", Json("fcm"));
+    reg.set("token", Json("fcm-device-token-01"));
+    const Json registered = integration::payloadOf(fixture.call(session, "devices.push.register", reg));
+    CHECK(registered.getInt("id") > 0);
+    CHECK_EQ(registered.getString("platform"), std::string("fcm"));
+
+    // Upsert по (user, token): повтор не плодит устройства.
+    const Json again = integration::payloadOf(fixture.call(session, "devices.push.register", reg));
+    CHECK_EQ(again.getInt("id"), registered.getInt("id"));
+
+    const Json devices = integration::payloadOf(fixture.call(session, "devices.push.list"));
+    CHECK_EQ(devices.get("devices").items().size(), std::size_t(1));
+    CHECK_EQ(devices.get("devices").at(0).getString("platform"), std::string("fcm"));
+    CHECK(devices.get("devices").at(0).contains("token") == false);
+}
+
 // --- Этап 14: сценарии безопасности -----------------------------------------
 
 TEST(security_brute_force_throttle) {

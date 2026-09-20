@@ -1,7 +1,7 @@
 # Aura — кроссплатформенный персональный ИИ-агент
 
-Aura — личный ИИ-агент, который живёт на ваших устройствах (desktop Qt и iOS)
-и на вашем сервере. Вы говорите Ауре: *«Хочу встретиться с другом в эти
+Aura — личный ИИ-агент, который живёт на ваших устройствах (desktop Qt, iOS
+и Android) и на вашем сервере. Вы говорите Ауре: *«Хочу встретиться с другом в эти
 выходные, чтобы обсудить стартап»* — она связывается с Аурой друга
 (Agent-to-Agent), находит пересечение в графиках, выбирает место под ваши
 диеты и предлагает подтвердить бронирование. Опасные действия (письма,
@@ -16,13 +16,14 @@ Aura — личный ИИ-агент, который живёт на ваших
 | `ai/` | Python 3.11, FastAPI | ИИ-сервис: агент (LLM), гибридный RAG памяти, планировщик, STT, A2A-переговоры |
 | `client/` | Qt 6.5+, QML | desktop-клиент (Windows/macOS/Linux), адаптивный: стек или рельс + master-detail |
 | `ios/` | Swift, SwiftUI, AuraKit (SPM) | нативный iOS-клиент: Siri/Команды, deep links, APNs-push |
+| `android/` | Kotlin, Jetpack Compose, AuraKit (JVM) | нативный Android-клиент: шорткаты, deep links, FCM-push |
 | `schema/` | PostgreSQL 16 | 22 таблицы + миграции |
-| `tools/` | Python | e2e-прогон, сверка протокола iOS ↔ сервер |
+| `tools/` | Python | e2e-прогон, сверка протокола iOS/Android ↔ сервер |
 
 ## Архитектура (кратко)
 
 ```
-Qt-клиент / iOS-клиент
+Qt-клиент / iOS-клиент / Android-клиент
         │  WebSocket, JSON-конверт {id, type, payload}
         ▼
 C++-сервер (auth, чаты, память, задачи, инструменты,
@@ -72,6 +73,7 @@ make check           # тесты Python + C++
 | [MOBILE_FEATURES](docs/MOBILE_FEATURES.md) | Siri, Команды, deep links, Back Tap (честно) |
 | [DESIGN](docs/DESIGN.md) / [DESIGN_SYSTEM](docs/DESIGN_SYSTEM.md) | дизайн full_mix, токены темы |
 | [IOS](docs/IOS.md) | сборка и возможности iOS-приложения |
+| [ANDROID](docs/ANDROID.md) | сборка и возможности Android-приложения |
 | [TESTING](docs/TESTING.md) | тесты и чек-листы |
 | [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | частые проблемы |
 | [AUDIT](docs/AUDIT.md) | аудит кода и исправления |
@@ -79,7 +81,8 @@ make check           # тесты Python + C++
 
 ## Статус
 
-Этапы 1–10 и 12–16 готовы; этап 11 (Android) отложен по решению владельца.
+Все 16 этапов v3 готовы, включая Android (этап 11).
 Production-стек — `docker compose up` (PostgreSQL + AI Service + C++-сервер),
-CI на каждый push собирает ядро и гоняет тесты. Ограничения песочницы
-разработки честно описаны в [ROADMAP_V3](docs/ROADMAP_V3.md).
+CI на каждый push собирает ядро и гоняет тесты (включая JVM-тесты
+Android-AuraKit). Ограничения песочницы разработки честно описаны в
+[ROADMAP_V3](docs/ROADMAP_V3.md).

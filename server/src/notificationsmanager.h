@@ -56,7 +56,7 @@ private:
     bool inQuietHours(long long userId) const;
     bool kindMuted(long long userId, const std::string& kind) const;
     void deliverPush(const NotificationRecord& record, long long badge);
-    Json apnsEnvelope(const PushDeviceRecord& device, const NotificationRecord& record,
+    Json pushEnvelope(const PushDeviceRecord& device, const NotificationRecord& record,
                       long long badge) const;
 
     DatabaseManager& database_;

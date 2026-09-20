@@ -71,7 +71,7 @@ AURA_2FA_KEY="$(openssl rand -hex 32)" \
 | токены/лимиты | `AURA_TOKEN_TTL` (7 дней), `AURA_REFRESH_TTL` (30 дней), `AURA_VERIFY_TTL`, `AURA_RESET_TTL`, `AURA_MAX_LOGIN_ATTEMPTS` (8), `AURA_LOGIN_WINDOW` (300 с) |
 | почта | `AURA_MAIL_DRIVER` (`dev` — коды в ответе и логе; `http` + `AURA_EMAIL_API_URL`) |
 | Google OAuth | `AURA_GOOGLE_CLIENT_ID/_SECRET`, `AURA_GOOGLE_AUTH_URL/_TOKEN_URL/_REVOKE_URL/_CALENDAR_URL/_GMAIL_URL`, `AURA_OAUTH_STATE_TTL` |
-| push | `AURA_PUSH_DRIVER` (`dev`/`webhook`), `AURA_PUSH_WEBHOOK_URL`, `AURA_APNS_TOPIC` (ai.aura.app), `AURA_APNS_URL` |
+| push | `AURA_PUSH_DRIVER` (`dev`/`webhook`), `AURA_PUSH_WEBHOOK_URL`, `AURA_APNS_TOPIC` (ai.aura.app), `AURA_APNS_URL`, `AURA_FCM_URL` (FCM HTTP v1, этап 11: замените `aura` на id проекта Firebase) |
 | прочее | `AURA_SCHEDULER_INTERVAL_MS` (0 — только ручной tick), `AURA_TOOLS_MODE`, `AURA_MAPS_API_URL`, `AURA_LOG_LEVEL` |
 
 ### Google OAuth (интеграции Calendar/Gmail)

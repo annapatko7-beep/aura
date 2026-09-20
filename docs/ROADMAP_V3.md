@@ -7,7 +7,7 @@
 
 | Вопрос | Решение |
 | --- | --- |
-| Платформы v1 | **Desktop (Win/macOS/Linux) + iOS**; Android и Web — позже |
+| Платформы v1 | **Desktop (Win/macOS/Linux) + iOS**; Android и Web — позже. _Обновление: Android реализован этапом 11 по решению владельца; Web по-прежнему вне плана v3_ |
 | Код | **Раздельные клиенты**: Qt 6/QML для desktop, **Swift/SwiftUI** для iOS; общий только протокол и backend |
 | Голос | **Гибрид**: on-device когда доступно (iOS Speech Framework), сервер (Whisper-совместимый STT) — fallback и диктовка; TTS платформенный, ru+en+авто |
 | Вход | Email+пароль, **Google OAuth, Apple OAuth, passkey (WebAuthn), TOTP 2FA + recovery-коды**; без SMS |
@@ -184,10 +184,11 @@ C++-сервер, Qt, iOS; таблицы env-переменных; OAuth Google
 DATABASE (22 таблицы по доменам, соглашения, каскады), PRIVACY (что
 хранится, кто видит, чего нет по принципу), A2A_PROTOCOL (транспорт,
 запрос/ответ, раунды, эскалация, безопасность), MOBILE_FEATURES (Siri/
-Команды, deep links, Back Tap честно, push, Android отложен),
-DESIGN_SYSTEM (токены full_mix, 11 компонентов, адаптивность),
-TROUBLESHOOTING (симптом → решение по всем слоям). Ранее готовы:
-PROTOCOL (API), SECURITY, TESTING, IOS, DESIGN, AUDIT.
+Команды, deep links, Back Tap честно, push; секция Android добавлена
+этапом 11), DESIGN_SYSTEM (токены full_mix, 11 компонентов,
+адаптивность), TROUBLESHOOTING (симптом → решение по всем слоям).
+Ранее готовы: PROTOCOL (API), SECURITY, TESTING, IOS, DESIGN, AUDIT.
+Этап 11 добавил ANDROID.md.
 
 ## Production-сборка (этап 16) — ГОТОВО
 
@@ -207,6 +208,37 @@ PROTOCOL (API), SECURITY, TESTING, IOS, DESIGN, AUDIT.
   (36/36, бинарник запускается), YAML compose и CI валидны, полный набор
   тестов зелёный. Сам `docker build` в песочнице недоступен — образы
   нужно собрать один раз на машине с Docker (`make docker-build`).
+
+## Android (этап 11) — ГОТОВО — нативный Kotlin
+
+Владелец вернул этап 11 в работу после этапа 16. Реализовано по тем же
+принципам, что iOS: раздельный клиент, общий только протокол.
+
+- **Клиент** `android/`: Kotlin + Jetpack Compose (minSdk 26, targetSdk 34);
+  модуль `:aurakit` — чистый Kotlin/JVM (WS-транспорт с автопереподключением,
+  типизированный AuraClient, разбор deep links) + JVM-тесты без эмулятора.
+- **UI**: вход/регистрация/код email/2FA, чаты и Аура, задачи, «Ждут»
+  (барьер подтверждения + разрешения), «Входящая» уведомлений, настройки
+  (2FA, интеграции Google через Custom Tabs, push-устройства, сервер),
+  голосовой лист. Тема — токены full_mix один в один с DESIGN_SYSTEM.
+- **Push**: платформа `fcm` (сервер: CHECK-констрейнт миграцией
+  `2026_09_20_push_fcm.sql`, конверт FCM HTTP v1 во внешнем шлюзе —
+  `AURA_FCM_URL`), регистрация/ротация токена, канал `aura`, без
+  `google-services.json` — честный статус «не настроен».
+- **Шорткаты лаунчера** + `ACTION_ASSIST` + deep links (`aura://…`,
+  включая `aura://notifications`); голос — SpeechRecognizer с fallback на
+  серверный STT; озвучка — TextToSpeech. Разрешения: INTERNET,
+  POST_NOTIFICATIONS, RECORD_AUDIO — и всё. Никаких Accessibility API.
+- **Проверки**: `tools/check_android_protocol.py` (43 типа ↔ 64 хендлера),
+  C++ unit `server_push_devices_fcm` (56 тестов / 497 проверок), e2e 140
+  проверок (секция 3e: fcm-конверт через push-мок), CI job `android`
+  (`:aurakit:test`). Сборка APK — вне песочницы (нет Android SDK),
+  см. docs/ANDROID.md.
+- Попутно исправлены три настоящих бага iOS-клиента, найденные при
+  сверке протоколов: `chat.send` отправлял `text` вместо `body`;
+  `prefs.set` заворачивал настройки в `{"preferences": …}` (сервер читает
+  поля из корня payload); `auth.login2fa` не передавал пароль (и поле
+  `device`), из-за чего вход с 2FA не мог завершиться.
 
 ## Desktop и адаптивный UI (этап 12) — ГОТОВО
 
@@ -236,5 +268,6 @@ docs/DESIGN.md «Адаптивность».
 
 5 — Auth/регистрация/сессии · 6 — 2FA и безопасность · 7 — голос и озвучка ·
 8 — AI-функции · 9 — интеграции и разрешения · 10 — iOS и Shortcuts ·
-11 — Android (отложен, вне v1) · 12 — desktop и адаптивный UI · 13 — push ·
-14 — тестирование · 15 — документация · 16 — production-сборка.
+11 — Android (готов, выполнен после 16 по решению владельца) ·
+12 — desktop и адаптивный UI · 13 — push · 14 — тестирование ·
+15 — документация · 16 — production-сборка. Все этапы v3 завершены.

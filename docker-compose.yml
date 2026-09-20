@@ -24,6 +24,7 @@ services:
       - ./schema/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./schema/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
       - ./schema/migrations/2026_09_20_notifications.sql:/docker-entrypoint-initdb.d/03-migration-notifications.sql:ro
+      - ./schema/migrations/2026_09_20_push_fcm.sql:/docker-entrypoint-initdb.d/04-migration-push-fcm.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aura -d aura"]
       interval: 5s

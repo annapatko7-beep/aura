@@ -56,6 +56,10 @@ struct Config {
     std::string pushWebhookUrl;                          // AURA_PUSH_WEBHOOK_URL
     std::string apnsTopic = "ai.aura.app";               // AURA_APNS_TOPIC (bundle id iOS)
     std::string apnsUrl = "https://api.push.apple.com";  // AURA_APNS_URL (для шлюза)
+    // FCM (Android, этап 11): та же схема — сервер не хранит ключи Google и не
+    // терминирует TLS; шлюз подписывает OAuth2-токен сервисного аккаунта и
+    // форвардит тело fcm.message в FCM HTTP v1 API.
+    std::string fcmUrl = "https://fcm.googleapis.com/v1/projects/aura/messages:send";  // AURA_FCM_URL
     std::string logLevel = "info";                       // AURA_LOG_LEVEL
 
     static Config fromEnv();

@@ -25,7 +25,7 @@ final class AppStore: ObservableObject {
     enum AuthState: Equatable {
         case loggedOut
         case needsEmailCode(String)   // ждём код подтверждения email
-        case needs2fa(String)         // ждём TOTP-код
+        case needs2fa(String, String) // ждём TOTP-код (email, пароль для login2fa)
         case loggedIn
     }
 
@@ -111,10 +111,11 @@ final class AppStore: ObservableObject {
             do {
                 try connectTransport()
                 let payload = try await client.login(email: email, password: password,
+                                                     device: "ios",
                                                      deviceId: deviceId())
                 try await applyAuth(payload)
             } catch let error as AuraError where error.code == "requires_2fa" {
-                authState = .needs2fa(email)
+                authState = .needs2fa(email, password)
             } catch {
                 fail(error)
             }
@@ -148,11 +149,13 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func login2fa(email: String, code: String, trustDevice: Bool) {
+    func login2fa(email: String, password: String, code: String, trustDevice: Bool) {
         Task {
             do {
-                let payload = try await client.login2fa(email: email, code: code,
+                let payload = try await client.login2fa(email: email, password: password,
+                                                        code: code,
                                                         trustDevice: trustDevice,
+                                                        device: "ios",
                                                         deviceId: deviceId())
                 try await applyAuth(payload)
             } catch {

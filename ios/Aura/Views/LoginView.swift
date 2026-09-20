@@ -58,13 +58,14 @@ struct LoginView: View {
                             code = ""
                         }
                     }
-                case .needs2fa(let pendingEmail):
+                case .needs2fa(let pendingEmail, let pendingPassword):
                     Section("Двухфакторная аутентификация") {
                         TextField("Код из приложения-аутентификатора", text: $code)
                             .keyboardType(.numberPad)
                         Toggle("Доверять этому устройству", isOn: $trustDevice)
                         Button("Подтвердить вход") {
-                            store.login2fa(email: pendingEmail, code: code, trustDevice: trustDevice)
+                            store.login2fa(email: pendingEmail, password: pendingPassword,
+                                           code: code, trustDevice: trustDevice)
                             code = ""
                         }
                         Button("Отмена") { store.authState = .loggedOut }

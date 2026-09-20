@@ -65,12 +65,63 @@ Back Tap — системная функция iOS (Настройки → Ун�
 - **Keychain**: токены и адрес сервера — только
   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`.
 
-## Android (этап 11 — отложен)
+## Android (готово, этап 11)
 
-По решению владельца Android-клиент отложен. Когда будет — только
-официальные механизмы: FCM для push, Shortcuts/Assistant для голоса,
-без Accessibility API и без избыточных разрешений (те же принципы,
-что выше).
+Нативное приложение: Kotlin + Jetpack Compose, общий слой `:aurakit`
+(чистый Kotlin/JVM — тот же WS-протокол, что у desktop и iOS; его тесты
+гоняются без эмулятора). Сборка — [ANDROID.md](ANDROID.md).
+
+### Push: Firebase Cloud Messaging
+
+- Токен FCM регистрируется после входа (`devices.push.register`, платформа
+  `fcm`); ротация токена (`onNewToken`) — повторный upsert.
+- Сервер собирает для FCM-устройств конверт HTTP v1 API
+  (`fcm: {url, message}`) и отдаёт его внешнему шлюзу
+  (`AURA_PUSH_DRIVER=webhook`): шлюз подписывает OAuth2-токен сервисного
+  аккаунта Google и форвардит `message`. Ключи Google на C++-сервере не
+  хранятся — так же, как ключ APNs.
+- Системная доставка идёт в канал `aura` (создаётся приложением); в
+  foreground карточку показывает само приложение и обновляет «входящую».
+- Без `app/google-services.json` (в репозиторий не попадает) push честно
+  показывает «не настроен» — остальные функции работают.
+
+### Шорткаты и голос — только официальные механизмы
+
+- **Шорткаты лаунчера** (`res/xml/shortcuts.xml`, долгое нажатие на иконке):
+  «Спросить Ауру», «Голосом», «Новая задача» — каждый открывает приложение
+  по deep link `aura://…`.
+- **Ассистент**: activity принимает `android.intent.action.ASSIST`.
+- **Голос**: системный `SpeechRecognizer` (on-device), fallback — запись
+  16 кГц моно → WAV → `speech.transcribe` (серверный Whisper-совместимый
+  STT); озвучка — платформенный `TextToSpeech`.
+- **Никаких Accessibility API, фоновых слушателей и «своего Back Tap»** —
+  на Android аналога Back Tap нет, и имитировать его мы не будем.
+
+### Разрешения (минимум)
+
+| разрешение | зачем | когда запрашивается |
+| --- | --- | --- |
+| `INTERNET` | WS-соединение | install-time |
+| `POST_NOTIFICATIONS` | уведомления и push (Android 13+) | при первом входе |
+| `RECORD_AUDIO` | голосовой ввод | при нажатии «Слушать» |
+
+### Deep links (`aura://`)
+
+Тот же набор, что на iOS (таблица выше), плюс `aura://notifications` —
+тап по push-уведомлению открывает «входящую». Неизвестные пути
+игнорируются без краша.
+
+### Google OAuth
+
+`integrations.begin` → Chrome Custom Tabs → редирект `aura://oauth`
+возвращает пользователя в приложение (singleTask + intent-filter), дальше —
+`integrations.callback`. Токены провайдеров клиенту не отдаются.
+
+### Хранение секретов
+
+Access/refresh-токены и адрес сервера — `EncryptedSharedPreferences`
+(ключи в Android Keystore, аналог Keychain на iOS). `device_id` — обычный
+SharedPreferences: это не секрет, а идентификатор для доверенных устройств.
 
 ## Чек-листы ручной проверки
 

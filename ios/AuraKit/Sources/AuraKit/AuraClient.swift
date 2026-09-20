@@ -34,6 +34,12 @@ public final class AuraClient: @unchecked Sendable {
         try await transport.request(type, .object(payload))
     }
 
+    /// Универсальный запрос с произвольным JSON-payload (например prefs.set,
+    /// где поля настроек лежат прямо в корне payload).
+    public func request(_ type: String, _ payload: JSONValue) async throws -> JSONValue {
+        try await transport.request(type, payload)
+    }
+
     // MARK: - Auth
 
     public func register(email: String, password: String, displayName: String) async throws -> JSONValue {
@@ -55,21 +61,27 @@ public final class AuraClient: @unchecked Sendable {
         try await request("auth.resendCode", ["email": .string(email)])
     }
 
-    public func login(email: String, password: String, deviceId: String) async throws -> JSONValue {
+    public func login(email: String, password: String, device: String,
+                      deviceId: String) async throws -> JSONValue {
         try await request("auth.login", [
             "email": .string(email),
             "password": .string(password),
+            "device": .string(device),
             "device_id": .string(deviceId)
         ])
     }
 
-    /// Завершение входа с TOTP-кодом (2FA).
-    public func login2fa(email: String, code: String, trustDevice: Bool,
+    /// Завершение входа с TOTP-кодом (2FA). Сервер повторно проверяет пароль
+    /// (docs/PROTOCOL.md: auth.login2fa = email + password + code).
+    public func login2fa(email: String, password: String, code: String,
+                         trustDevice: Bool, device: String,
                          deviceId: String) async throws -> JSONValue {
         try await request("auth.login2fa", [
             "email": .string(email),
+            "password": .string(password),
             "code": .string(code),
             "trust_device": .bool(trustDevice),
+            "device": .string(device),
             "device_id": .string(deviceId)
         ])
     }
@@ -113,9 +125,10 @@ public final class AuraClient: @unchecked Sendable {
     }
 
     public func chatSend(chatId: Int64, text: String) async throws -> JSONValue {
+        // Поле протокола — "body" (docs/PROTOCOL.md); сервер читает именно его.
         try await request("chat.send", [
             "chat_id": .from(chatId),
-            "text": .string(text)
+            "body": .string(text)
         ])
     }
 
@@ -150,7 +163,9 @@ public final class AuraClient: @unchecked Sendable {
     }
 
     public func prefsSet(_ preferences: JSONValue) async throws -> JSONValue {
-        try await request("prefs.set", ["preferences": preferences])
+        // Сервер читает поля настроек прямо из payload (docs/PROTOCOL.md):
+        // prefs.set { "theme": ..., "notifications": {...} } — без обёртки.
+        try await request("prefs.set", preferences)
     }
 
     // MARK: - Задачи (этап 8)

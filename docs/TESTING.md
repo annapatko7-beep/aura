@@ -4,7 +4,7 @@
 
 ## Автоматические сьюты
 
-### 1. C++ unit (ядро сервера) — 55 тестов, 491 проверка
+### 1. C++ unit (ядро сервера) — 56 тестов, 497 проверок
 
 ```bash
 cmake -S . -B build/server -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -31,7 +31,7 @@ cd ai && PYTHONPATH=. python -m pytest tests/
 speech), агент (mock-LLM), память (BM25-ранжирование), планировщик,
 речь, инструменты.
 
-### 3. E2E (полный стек) — 137 проверок
+### 3. E2E (полный стек) — 140 проверок
 
 Нужны: PostgreSQL, AI-сервис, C++-сервер, Python 3.11+.
 
@@ -39,6 +39,7 @@ speech), агент (mock-LLM), память (BM25-ранжирование), п
 # 1) PostgreSQL (например, pgserver или системный) + схема:
 psql "$DATABASE_URL" -f schema/schema.sql
 psql "$DATABASE_URL" -f schema/migrations/2026_09_20_notifications.sql
+psql "$DATABASE_URL" -f schema/migrations/2026_09_20_push_fcm.sql
 
 # 2) AI-сервис:
 cd ai && PYTHONPATH=. uvicorn aura_ai.app:app --host 127.0.0.1 --port 8000 &
@@ -63,10 +64,23 @@ Gmail, авто-refresh, отзыв); сценарии безопасности;
 ### 4. Статические проверки без платформенных инструментов
 
 ```bash
-python3 tools/check_ios_protocol.py   # Swift-типы сообщений ↔ хендлеры сервера
-qmlcachegen ...                       # синтаксис QML (рецепт в Makefile/CI)
-python3 -m py_compile tools/e2e.py    # синтаксис e2e
+python3 tools/check_ios_protocol.py       # Swift-типы сообщений ↔ хендлеры сервера
+python3 tools/check_android_protocol.py   # Kotlin-типы сообщений ↔ хендлеры сервера
+qmlcachegen ...                           # синтаксис QML (рецепт в Makefile/CI)
+python3 -m py_compile tools/e2e.py        # синтаксис e2e
 ```
+
+### 5. Android: JVM-тесты AuraKit (без эмулятора)
+
+Общий слой `:aurakit` — чистый Kotlin/JVM (протокол, deep links), поэтому
+его тесты работают где угодно, где есть JDK 17:
+
+```bash
+cd android && ./gradlew :aurakit:test
+```
+
+CI делает то же самое (job `android`). Полная сборка APK требует Android
+SDK — см. docs/ANDROID.md.
 
 Swift-сборка и Qt-сборка требуют macOS/Xcode и Qt 6 — в песочнице
 разработки их нет (см. ROADMAP «Ограничения песочницы»).
@@ -117,6 +131,14 @@ Swift-сборка и Qt-сборка требуют macOS/Xcode и Qt 6 — в 
 - [ ] «Создать задачу …» → задача появляется в списке;
 - [ ] Команды без разблокировки требуют аутентификацию (donate-предложения видны в приложении Команды).
 
+### Android: шорткаты и FCM
+- [ ] долгое нажатие на иконке → шорткаты «Спросить Ауру», «Голосом», «Новая задача» работают;
+- [ ] первый вход: запрос POST_NOTIFICATIONS (Android 13+);
+- [ ] токен FCM зарегистрирован («Входящая» → Push-устройства, платформа `fcm`);
+- [ ] напоминание приходит push-ом при закрытом приложении (канал «aura»);
+- [ ] тап по push открывает «входящую» (`aura://notifications`);
+- [ ] без `google-services.json` настройки честно показывают «Push не настроен», крашей нет.
+
 ### Поворот и адаптивность
 - [ ] портрет ↔ ландшафт: состояние экрана не теряется;
 - [ ] ширина ≥ 1120 (iPad/десктоп) → рельс + master-detail; < 1120 → стек;
@@ -134,7 +156,9 @@ Swift-сборка и Qt-сборка требуют macOS/Xcode и Qt 6 — в 
 1. `ctest` (C++ unit) — 0 ошибок;
 2. `pytest ai/tests` — 0 ошибок;
 3. e2e на чистом кластере PostgreSQL (схема + миграции) — 0 ошибок;
-4. `check_ios_protocol.py` — OK;
+4. `check_ios_protocol.py` и `check_android_protocol.py` — OK;
 5. qmlcachegen по всем QML — 0 ошибок;
 6. на Mac: `swift test` (AuraKit), сборка Xcode, прогон мобильных
-   чек-листов на симуляторе и устройстве.
+   чек-листов на симуляторе и устройстве;
+7. `./gradlew :aurakit:test` (JDK 17) и, при наличии Android SDK,
+   `./gradlew :app:assembleDebug` + чек-листы «Android: шорткаты и FCM».

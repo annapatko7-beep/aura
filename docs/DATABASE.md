@@ -53,7 +53,7 @@ e2e — на реальном PostgreSQL.
 | таблица | назначение |
 | --- | --- |
 | `notifications` | in-app «входящая»: kind, заголовок, тело, payload JSONB, `read_at`; индексы (user_id, id DESC) и частичный по непрочитанным |
-| `push_devices` | токены push-доставки: `platform` CHECK (`apns`/`webhook`/`dev`), UNIQUE(user_id, token), `enabled`, `last_used_at` |
+| `push_devices` | токены push-доставки: `platform` CHECK (`apns`/`fcm`/`webhook`/`dev`), UNIQUE(user_id, token), `enabled`, `last_used_at`; `fcm` добавлена миграцией `2026_09_20_push_fcm.sql` (этап 11) |
 
 ## Соглашения
 
