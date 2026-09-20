@@ -176,12 +176,18 @@ refresh (ротация), обход подтверждения (барьер), 
 push, deep links, Siri/Команды, поворот, офлайн) и регрессионная процедура
 релиза.
 
-## Документация (этап 15)
+## Документация (этап 15) — ГОТОВО
 
-README, ARCHITECTURE, SETUP, API, SECURITY, PRIVACY, MOBILE_FEATURES,
-A2A_PROTOCOL, DATABASE, DESIGN_SYSTEM, TROUBLESHOOTING — с инструкциями
-(.env, PostgreSQL, AI Service, сборка desktop/iOS, OAuth, push, 2FA,
-Siri Shortcuts).
+Написаны/обновлены: README (входная точка, быстрый старт, индекс),
+ARCHITECTURE (слои, решения, потоки данных), SETUP (PostgreSQL, AI Service,
+C++-сервер, Qt, iOS; таблицы env-переменных; OAuth Google, push-шлюз, 2FA),
+DATABASE (22 таблицы по доменам, соглашения, каскады), PRIVACY (что
+хранится, кто видит, чего нет по принципу), A2A_PROTOCOL (транспорт,
+запрос/ответ, раунды, эскалация, безопасность), MOBILE_FEATURES (Siri/
+Команды, deep links, Back Tap честно, push, Android отложен),
+DESIGN_SYSTEM (токены full_mix, 11 компонентов, адаптивность),
+TROUBLESHOOTING (симптом → решение по всем слоям). Ранее готовы:
+PROTOCOL (API), SECURITY, TESTING, IOS, DESIGN, AUDIT.
 
 ## Desktop и адаптивный UI (этап 12) — ГОТОВО
 
