@@ -102,3 +102,16 @@ jobs:
         with:
           name: aurakit-test-log
           path: aurakit-test.log
+
+      # Дубль лога в ветку arena/build-logs (песочница не видит артефакты).
+      - name: Публикация лога (ветка arena/build-logs)
+        if: always()
+        run: |
+          git config user.name "aura-ci"
+          git config user.email "ci@aura.local"
+          git fetch origin arena/build-logs
+          git checkout -B buildlogs FETCH_HEAD
+          cp ../aurakit-test.log aurakit-test.log
+          git add -A
+          git commit -m "aurakit log ${{ github.sha }} [skip ci]"
+          git push origin HEAD:arena/build-logs

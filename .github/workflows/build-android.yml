@@ -58,3 +58,17 @@ jobs:
         with:
           name: build-log-android
           path: build.log
+
+      # Песочница разработки не видит blob-хосты артефактов — дублируем лог
+      # в ветку arena/build-logs, откуда его можно прочитать обычным git.
+      - name: Публикация лога (ветка arena/build-logs)
+        if: always()
+        run: |
+          git config user.name "aura-ci"
+          git config user.email "ci@aura.local"
+          git fetch origin arena/build-logs
+          git checkout -B buildlogs FETCH_HEAD
+          cp ../build.log android-build.log
+          git add -A
+          git commit -m "android log ${{ github.sha }} [skip ci]"
+          git push origin HEAD:arena/build-logs

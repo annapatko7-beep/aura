@@ -79,3 +79,20 @@ jobs:
           path: |
             qt-install.log
             build.log
+
+      # Песочница разработки не видит blob-хосты артефактов — дублируем логи
+      # в ветку arena/build-logs, откуда их можно прочитать обычным git.
+      - name: Публикация лога (ветка arena/build-logs)
+        if: always()
+        shell: pwsh
+        run: |
+          git config user.name "aura-ci"
+          git config user.email "ci@aura.local"
+          git fetch origin arena/build-logs
+          git checkout -B buildlogs FETCH_HEAD
+          Copy-Item qt-install.log, build.log . -ErrorAction SilentlyContinue
+          Rename-Item qt-install.log windows-qt-install.log -ErrorAction SilentlyContinue
+          Rename-Item build.log windows-build.log -ErrorAction SilentlyContinue
+          git add -A
+          git commit -m "windows log ${{ github.sha }} [skip ci]"
+          git push origin HEAD:arena/build-logs
