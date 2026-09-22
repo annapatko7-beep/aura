@@ -33,15 +33,23 @@ jobs:
             @("6.8.3", "win64_msvc2022_64", "C:\Qt\6.8.3\msvc2022_64"),
             @("6.6.3", "win64_msvc2019_64", "C:\Qt\6.6.3\msvc2019_64")
           )) {
-            python -m aqt install-qt windows desktop $combo[0] $combo[1] `
-              -m qtwebsockets qtmultimedia qttexttospeech `
-              -O C:\Qt 2>&1 | Tee-Object -Append qt-install.log
-            if ($LASTEXITCODE -eq 0 -and (Test-Path "$($combo[2])\bin\qmake.exe")) {
-              echo "CMAKE_PREFIX_PATH=$($combo[2])" >> $env:GITHUB_ENV
-              echo "$($combo[2])\bin" >> $env:GITHUB_PATH
-              $ok = $true
-              break
+            # Как называется модуль TTS в этой версии — покажет список (пишем в лог).
+            python -m aqt list-qt windows desktop --modules $combo[0] $combo[1] 2>&1 |
+              Tee-Object -Append qt-install.log
+            foreach ($modules in @(
+              ,@("qtwebsockets", "qtmultimedia", "qttexttospeech")
+              ,@("qtwebsockets", "qtmultimedia", "qtspeech")
+            )) {
+              python -m aqt install-qt windows desktop $combo[0] $combo[1] `
+                -m @modules -O C:\Qt 2>&1 | Tee-Object -Append qt-install.log
+              if ($LASTEXITCODE -eq 0 -and (Test-Path "$($combo[2])\bin\qmake.exe")) {
+                echo "CMAKE_PREFIX_PATH=$($combo[2])" >> $env:GITHUB_ENV
+                echo "$($combo[2])\bin" >> $env:GITHUB_PATH
+                $ok = $true
+                break
+              }
             }
+            if ($ok) { break }
           }
           if (-not $ok) { exit 1 }
 

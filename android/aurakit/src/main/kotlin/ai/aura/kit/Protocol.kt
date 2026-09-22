@@ -29,9 +29,13 @@ data class AuraResponseFrame(
     val payload: JsonObject? = null,
 )
 
-/** Ошибка протокола: сервер вернул кадр {"type":"error", code, message}. */
-data class AuraError(val code: String, val message: String) :
-    Exception("$code: $message")
+/**
+ * Ошибка протокола: сервер вернул кадр {"type":"error", code, message}.
+ * Поле называется serverMessage, т.к. `message` в Exception занято;
+ * текст ошибки доступен через унаследованный `message` ("code: message").
+ */
+data class AuraError(val code: String, val serverMessage: String) :
+    Exception("$code: $serverMessage")
 
 /** Имена событий сервера (push внутри WS-сессии). */
 object AuraEventName {
