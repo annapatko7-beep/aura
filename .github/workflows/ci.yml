@@ -119,7 +119,8 @@ jobs:
           for i in 1 2 3; do
             rm -rf logpub
             {
-              git clone --depth 1 --branch arena/build-logs \
+              git -c http.extraHeader="Authorization: token ${{ github.token }}" \
+                clone --depth 1 --branch arena/build-logs \
                 "https://github.com/${{ github.repository }}" logpub 2>&1
               echo "clone exit=$?"
             } >> push-diag.log
@@ -141,7 +142,7 @@ jobs:
               git config user.email "ci@aura.local"
               git add -A 2>&1
               git commit -m "aurakit log ${{ github.sha }} [skip ci]" 2>&1
-              git push origin HEAD:arena/build-logs 2>&1
+              git -c http.extraHeader="Authorization: token ${{ github.token }}" push origin HEAD:arena/build-logs 2>&1
             ) >> push-diag.log 2>&1 && echo "push ok" >> push-diag.log && break
             sleep 10
           done

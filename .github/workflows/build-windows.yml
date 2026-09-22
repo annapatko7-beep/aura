@@ -109,7 +109,8 @@ jobs:
           Add-Content $pub "run ${{ github.run_id }} job windows"
           for ($i = 1; $i -le 3; $i++) {
             Remove-Item -Recurse -Force logpub -ErrorAction SilentlyContinue
-            git clone --depth 1 --branch arena/build-logs `
+            git -c http.extraHeader="Authorization: token ${{ github.token }}" `
+              clone --depth 1 --branch arena/build-logs `
               "https://github.com/${{ github.repository }}" logpub 2>&1 |
               Add-Content $pub
             Add-Content $pub "clone exit=$LASTEXITCODE"
@@ -130,7 +131,7 @@ jobs:
             git config user.email "ci@aura.local"
             git add -A 2>&1 | Add-Content $pub
             git commit -m "windows log ${{ github.sha }} [skip ci]" 2>&1 | Add-Content $pub
-            git push origin HEAD:arena/build-logs 2>&1 | Add-Content $pub
+            git -c http.extraHeader="Authorization: token ${{ github.token }}" push origin HEAD:arena/build-logs 2>&1 | Add-Content $pub
             $code = $LASTEXITCODE
             Add-Content $pub "push exit=$code"
             Pop-Location

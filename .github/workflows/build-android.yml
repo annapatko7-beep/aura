@@ -77,7 +77,10 @@ jobs:
             done
             # Хвост лога целиком — в одну аннотацию (grep может не поймать
             # формат сообщения Gradle).
-            printf '::error title=android-tail::%s\n' "$(tail -60 "$LOG" | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
+            # Секция "What went wrong" — там текст настоящей ошибки.
+            printf '::error title=android-cause::%s\n' "$(awk '/What went wrong/{f=1} f{print} f&&/BUILD FAILED/{exit}' "$LOG" | head -25 | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
+            # Первые 30 строк лога (задача и конфигурация).
+            printf '::error title=android-head::%s\n' "$(head -30 "$LOG" | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
           fi
           # Сам лог — в ветку arena/build-logs (песочница читает её git'ом).
           rm -f push-diag.log
@@ -85,7 +88,8 @@ jobs:
           for i in 1 2 3; do
             rm -rf logpub
             {
-              git clone --depth 1 --branch arena/build-logs \
+              git -c http.extraHeader="Authorization: token ${{ github.token }}" \
+                clone --depth 1 --branch arena/build-logs \
                 "https://github.com/${{ github.repository }}" logpub 2>&1
               echo "clone exit=$?"
             } >> push-diag.log
@@ -107,7 +111,7 @@ jobs:
               git config user.email "ci@aura.local"
               git add -A 2>&1
               git commit -m "android log ${{ github.sha }} [skip ci]" 2>&1
-              git push origin HEAD:arena/build-logs 2>&1
+              git -c http.extraHeader="Authorization: token ${{ github.token }}" push origin HEAD:arena/build-logs 2>&1
             ) >> push-diag.log 2>&1 && echo "push ok" >> push-diag.log && break
             sleep 10
           done
