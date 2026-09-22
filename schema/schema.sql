@@ -209,6 +209,11 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     theme            TEXT        NOT NULL DEFAULT 'graphite'
                      CHECK (theme IN ('graphite', 'graphite-light')),
     notifications    JSONB       NOT NULL DEFAULT '{"push": true, "email": false}'::jsonb,
+    -- Онбординг-опрос после регистрации (этап 8+): день рождения и аллергии
+    -- попадают в контекст AI (MemoryManager.context → preferences).
+    birthday         TEXT        NOT NULL DEFAULT '',      -- YYYY-MM-DD
+    allergies        TEXT[]      NOT NULL DEFAULT '{}',
+    onboarded        BOOLEAN     NOT NULL DEFAULT FALSE,   -- опрос пройден
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

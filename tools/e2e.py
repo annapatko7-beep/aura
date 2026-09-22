@@ -395,6 +395,15 @@ async def main() -> int:
     check(prefs.get("payload", {}).get("city") == "Керкраде", "настройки Анны сохранены",
           prefs.get("payload"))
 
+    # Онбординг-опрос: день рождения + аллергии, флаг onboarded ставит сервер.
+    survey = await anna.call("prefs.set", {"birthday": "1995-04-18",
+                                           "allergies": ["орехи", "лактоза"]})
+    check(survey.get("payload", {}).get("birthday") == "1995-04-18"
+          and survey.get("payload", {}).get("allergies") == ["орехи", "лактоза"]
+          and survey.get("payload", {}).get("onboarded") is True,
+          "онбординг: birthday/allergies сохранены, onboarded=true",
+          survey.get("payload"))
+
     # Память
     await anna.call("memory.add", {"text": "Люблю тихие кофейни", "kind": "preference"})
     memory = await anna.call("memory.list", {"query": "кофейни"})

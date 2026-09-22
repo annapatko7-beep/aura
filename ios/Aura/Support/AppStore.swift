@@ -57,6 +57,11 @@ final class AppStore: ObservableObject {
     @Published var pushDevices: [JSONValue] = []
 
     @Published var tab: AppTab = .chats
+
+    // Онбординг-опрос после регистрации (этап 8+): показываем, пока сервер
+    // не выставил prefs.onboarded (флаг ставится при сохранении анкеты).
+    @Published var needOnboarding = false
+    @Published var onboardingVisible = false
     @Published var voiceOverlayVisible = false
     @Published var devEmailCode = ""      // подсказка в режиме AURA_MAIL_DRIVER=dev
     @Published var ttsEnabled = true
@@ -192,6 +197,7 @@ final class AppStore: ObservableObject {
         // Этап 13: «входящая» уведомлений + APNs-токен (если уже получен).
         loadNotifications()
         loadPushDevices()
+        await checkOnboarding()
         if !pendingPushToken.isEmpty {
             let token = pendingPushToken
             pendingPushToken = ""
@@ -254,6 +260,46 @@ final class AppStore: ObservableObject {
         loadConfirmations()
         loadPermissions()
         loadIntegrations()
+    }
+
+    // MARK: Онбординг-опрос
+
+    func checkOnboarding() async {
+        do {
+            let prefs = try await client.request("prefs.get")
+            let needs = !prefs.bool("onboarded")
+            await MainActor.run {
+                needOnboarding = needs
+                onboardingVisible = needs
+            }
+        } catch {
+            fail(error)
+        }
+    }
+
+    func submitOnboarding(birthday: String, allergies: [String], diet: [String],
+                          transport: String, city: String, budget: String) {
+        var payload: [String: JSONValue] = ["transport": .string(transport)]
+        if !birthday.isEmpty { payload["birthday"] = .string(birthday) }
+        if !allergies.isEmpty { payload["allergies"] = .array(allergies.map { .string($0) }) }
+        if !diet.isEmpty { payload["diet"] = .array(diet.map { .string($0) }) }
+        if !city.isEmpty { payload["city"] = .string(city) }
+        if let value = Double(budget) { payload["budget_limit"] = .number(value) }
+        Task {
+            do {
+                _ = try await client.prefsSet(.object(payload))
+                await MainActor.run {
+                    needOnboarding = false
+                    onboardingVisible = false
+                    statusMessage = "Анкета сохранена"
+                }
+            } catch { fail(error) }
+        }
+    }
+
+    /// «Пропустить»: пустую анкету не сохраняем, но больше не показываем.
+    func skipOnboarding() {
+        onboardingVisible = false
     }
 
     func loadChats() {

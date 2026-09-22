@@ -34,7 +34,7 @@ e2e — на реальном PostgreSQL.
 | таблица | назначение |
 | --- | --- |
 | `user_memory` | факты/предпочтения/расписание/контакты: `kind` CHECK (`fact`/`preference`/`schedule`/`contact`), текст, вес |
-| `user_preferences` | JSONB-настройки (тема, диета, город, бюджет, `notifications.quiet_hours`, `notifications.muted_kinds`) |
+| `user_preferences` | JSONB-настройки (тема, диета, город, бюджет, `notifications.quiet_hours`, `notifications.muted_kinds`); онбординг-анкета: `birthday`, `allergies[]`, `onboarded` (миграция `2026_09_21_onboarding.sql`) |
 
 ### Инструменты и задачи
 | таблица | назначение |

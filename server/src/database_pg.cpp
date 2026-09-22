@@ -1003,6 +1003,7 @@ public:
                 "'diet', diet, 'transport', transport, 'preferred_hours', preferred_hours, "
                 "'work_hours', work_hours, 'budget_limit', budget_limit, 'city', city, "
                 "'lat', lat, 'lon', lon, 'theme', theme, 'notifications', notifications, "
+                "'birthday', birthday, 'allergies', allergies, 'onboarded', onboarded, "
                 "'updated_at', to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'))::text "
                 "FROM user_preferences WHERE user_id = $1",
                 {std::to_string(userId)}, &result)) {
@@ -1032,6 +1033,9 @@ public:
                 "lon = COALESCE(($2::jsonb->>'lon')::double precision, lon), "
                 "theme = COALESCE($2::jsonb->>'theme', theme), "
                 "notifications = COALESCE($2::jsonb->'notifications', notifications), "
+                "birthday = COALESCE($2::jsonb->>'birthday', birthday), "
+                "allergies = COALESCE((SELECT array_agg(x) FROM jsonb_array_elements_text($2::jsonb->'allergies') x), allergies), "
+                "onboarded = COALESCE(($2::jsonb->>'onboarded')::boolean, onboarded), "
                 "updated_at = now() "
                 "WHERE user_id = $1",
                 {std::to_string(userId), preferences.dump()}, &result)) {

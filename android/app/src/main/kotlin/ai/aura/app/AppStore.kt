@@ -126,6 +126,10 @@ object AppStore {
     private val _wantVoice = MutableStateFlow(false)
     val wantVoice: StateFlow<Boolean> = _wantVoice
 
+    /** Онбординг-опрос: показываем после входа, пока prefs.onboarded != true. */
+    private val _needOnboarding = MutableStateFlow(false)
+    val needOnboarding: StateFlow<Boolean> = _needOnboarding
+
     private var eventsStarted = false
 
     // ------------------------------------------------------------- запуск
@@ -272,7 +276,43 @@ object AppStore {
         refreshIntegrations()
         refresh2faStatus()
         registerPushDevice()
+        checkOnboarding()
     }
+
+    /** prefs.onboarded ставит сервер, когда сохранены поля анкеты. */
+    private suspend fun checkOnboarding() {
+        runCatching {
+            _needOnboarding.value = !client.prefsGet().bool("onboarded")
+        }
+    }
+
+    /** Сохранить анкету (день рождения, аллергии, диета, …) через prefs.set. */
+    fun submitOnboarding(
+        birthday: String,
+        allergies: List<String>,
+        diet: List<String>,
+        transport: String,
+        city: String,
+        budget: String,
+    ) = scope.launch {
+        guard {
+            val payload = buildJsonObject {
+                if (birthday.isNotEmpty()) put("birthday", birthday)
+                if (allergies.isNotEmpty()) put("allergies", kotlinx.serialization.json.JsonArray(
+                    allergies.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                if (diet.isNotEmpty()) put("diet", kotlinx.serialization.json.JsonArray(
+                    diet.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                put("transport", transport)
+                if (city.isNotEmpty()) put("city", city)
+                budget.toDoubleOrNull()?.let { put("budget_limit", it) }
+            }
+            client.prefsSet(payload)
+            _needOnboarding.value = false
+        }
+    }
+
+    /** «Пропустить»: не сохраняем пустую анкету, но больше не показываем. */
+    fun skipOnboarding() { _needOnboarding.value = false }
 
     private fun resetData() {
         _chats.value = emptyList(); _messages.value = emptyList()

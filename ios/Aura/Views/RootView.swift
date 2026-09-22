@@ -39,6 +39,9 @@ struct RootView: View {
                 } message: {
                     Text(store.errorMessage)
                 }
+                .sheet(isPresented: $store.onboardingVisible) {
+                    OnboardingView()
+                }
             } else {
                 LoginView()
             }

@@ -172,7 +172,16 @@ AVSpeechSynthesizer), отдельного сетевого метода не т
 | `prefs.get` | — | настройки |
 | `prefs.set` | любые поля `user_preferences` | обновлённые настройки |
 
+Онбординг-опрос после регистрации: клиенты показывают анкету (день
+рождения, аллергии, диета, город, транспорт, бюджет), пока
+`prefs.onboarded != true`. Флаг выставляет **сервер** в `prefs.set`, как
+только в payload пришло хотя бы одно поле анкеты (`birthday`, `allergies`,
+`diet`, `transport`, `city`, `budget_limit`, `preferred_hours`,
+`work_hours`); клиент может передать `onboarded` явно. Анкета — обычные
+поля настроек, она сразу попадает в контекст AI (`preferences`).
+
 Поля настроек: `diet[]`, `transport`, `preferred_hours[]`, `work_hours[]`,
+`birthday` (`YYYY-MM-DD`), `allergies[]`, `onboarded` (bool),
 `budget_limit`, `city`, `lat`, `lon`, `theme`, `notifications{}`.
 
 ### Инструменты

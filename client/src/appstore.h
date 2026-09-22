@@ -36,6 +36,7 @@ class AppStore : public QObject {
     Q_PROPERTY(QVariantList messages READ messages NOTIFY messagesChanged)
     Q_PROPERTY(QVariantList memory READ memory NOTIFY memoryChanged)
     Q_PROPERTY(QVariantMap preferences READ preferences NOTIFY preferencesChanged)
+    Q_PROPERTY(bool needOnboarding READ needOnboarding NOTIFY preferencesChanged)
     Q_PROPERTY(QString chatTitle READ chatTitle NOTIFY chatChanged)
     Q_PROPERTY(bool peerOnline READ peerOnline NOTIFY chatChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
@@ -100,6 +101,13 @@ public:
     QVariantList messages() const { return messages_; }
     QVariantList memory() const { return memory_; }
     QVariantMap preferences() const { return preferences_; }
+    // Онбординг-опрос: сервер ставит prefs.onboarded при сохранении анкеты;
+    // onboardingDismissed_ — локальное «Пропустить» до конца сессии.
+    bool needOnboarding() const {
+        return userId_ != 0 && !onboardingDismissed_ &&
+               !preferences_.value(QStringLiteral("onboarded")).toBool();
+    }
+    void dismissOnboarding() { onboardingDismissed_ = true; emit preferencesChanged(); }
     QString chatTitle() const { return chatTitle_; }
     bool peerOnline() const { return peerOnline_; }
     QString statusMessage() const { return statusMessage_; }
@@ -305,6 +313,7 @@ private:
     QVariantList messages_;
     QVariantList memory_;
     QVariantMap preferences_;
+    bool onboardingDismissed_ = false;
     QString statusMessage_;
     QString errorMessage_;
     // auth v3

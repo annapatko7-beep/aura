@@ -101,6 +101,9 @@ public:
         preferences.set("budget_limit", Json(0));
         preferences.set("city", Json(""));
         preferences.set("theme", Json("graphite"));
+        preferences.set("birthday", Json(""));
+        preferences.set("allergies", Json::array());
+        preferences.set("onboarded", Json(false));
         Json notifications = Json::object();
         notifications.set("push", Json(true));
         notifications.set("email", Json(false));

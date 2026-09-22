@@ -215,7 +215,22 @@ Json MemoryManager::preferences(long long userId) {
 }
 
 bool MemoryManager::setPreferences(long long userId, const Json& preferences, std::string& error) {
-    const DatabaseError result = database_.db().setPreferences(userId, preferences);
+    Json toSave = preferences;
+    // Онбординг-опрос после регистрации: как только пользователь прислал
+    // хотя бы одно поле анкеты (день рождения, аллергии, диета, город, …),
+    // помечаем опрос пройденным — клиенты по этому флагу показывают анкету.
+    static const char* kOnboardingKeys[] = {"birthday", "allergies", "diet",   "transport",
+                                            "city",     "budget_limit", "preferred_hours",
+                                            "work_hours"};
+    if (!toSave.contains("onboarded")) {
+        for (const char* key : kOnboardingKeys) {
+            if (toSave.contains(key)) {
+                toSave.set("onboarded", Json(true));
+                break;
+            }
+        }
+    }
+    const DatabaseError result = database_.db().setPreferences(userId, toSave);
     if (!result.ok) {
         error = result.message;
         return false;

@@ -128,6 +128,7 @@ ApplicationWindow {
         id: rootLoader
         anchors.fill: parent
         sourceComponent: !App || !App.authenticated ? loginPage
+                         : App.needOnboarding ? onboardingPage
                          : (window.wideLayout ? desktopShell : compactStack)
     }
 
@@ -136,6 +137,12 @@ ApplicationWindow {
         LoginPage {
             // После входа Loader переключится сам (binding на authenticated).
         }
+    }
+
+    // Онбординг-опрос после регистрации: пока prefs.onboarded не выставлен.
+    Component {
+        id: onboardingPage
+        OnboardingPage {}
     }
 
     // Узкое окно: стековая навигация (как до этапа 12).

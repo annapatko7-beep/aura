@@ -1847,6 +1847,45 @@ TEST(server_push_devices) {
              std::size_t(0));
 }
 
+TEST(server_onboarding_prefs) {
+    // Онбординг-опрос после регистрации: новые поля настроек и флаг onboarded.
+    Fixture fixture;
+    auto session = fixture.makeSession("onboarding");
+    fixture.registerUser(session, "survey@example.com", "Анкета");
+
+    // У нового пользователя опрос не пройден.
+    const Json defaults = integration::payloadOf(fixture.call(session, "prefs.get"));
+    CHECK(defaults.getBool("onboarded") == false);
+    CHECK_EQ(defaults.getString("birthday"), std::string(""));
+
+    // Заполнение анкеты: день рождения, аллергии, диета, город.
+    Json survey = Json::object();
+    survey.set("birthday", Json("1995-04-18"));
+    Json allergies = Json::array();
+    allergies.push(Json("орехи"));
+    allergies.push(Json("лактоза"));
+    survey.set("allergies", allergies);
+    Json diet = Json::array();
+    diet.push(Json("vegetarian"));
+    survey.set("diet", diet);
+    survey.set("city", Json("Керкраде"));
+    const Json saved = integration::payloadOf(fixture.call(session, "prefs.set", survey));
+    CHECK_EQ(saved.getString("birthday"), std::string("1995-04-18"));
+    CHECK_EQ(saved.get("allergies").size(), static_cast<std::size_t>(2));
+    CHECK(saved.getBool("onboarded"));
+
+    // Флаг устойчив: последующие правки настроек его не сбрасывают.
+    Json theme = Json::object();
+    theme.set("theme", Json("graphite-light"));
+    const Json after = integration::payloadOf(fixture.call(session, "prefs.set", theme));
+    CHECK(after.getBool("onboarded"));
+    CHECK_EQ(after.getString("birthday"), std::string("1995-04-18"));
+
+    // Анкета видна в контексте AI-сервиса (как остальные настройки).
+    const Json context = fixture.server->memory().context(session->userId(), "спланируй ужин");
+    CHECK_EQ(context.get("preferences").getString("birthday"), std::string("1995-04-18"));
+}
+
 TEST(server_push_devices_fcm) {
     // Этап 11 (Android): платформа 'fcm' принимается наравне с 'apns'.
     Fixture fixture;

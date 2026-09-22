@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import ai.aura.app.ui.LoginScreen
 import ai.aura.app.ui.MainScaffold
+import ai.aura.app.ui.OnboardingScreen
 import ai.aura.app.ui.VoiceSheet
 import ai.aura.app.ui.theme.AuraTheme
 
@@ -83,9 +84,11 @@ class MainActivity : ComponentActivity() {
                     ) {
                         if (busy) CircularProgressIndicator(modifier = Modifier.padding(8.dp))
                         val auth by AppStore.auth.collectAsState()
-                        when (auth) {
-                            is AppStore.AuthState.LoggedIn -> MainScaffold()
-                            else -> LoginScreen()
+                        val needOnboarding by AppStore.needOnboarding.collectAsState()
+                        when {
+                            auth !is AppStore.AuthState.LoggedIn -> LoginScreen()
+                            needOnboarding -> OnboardingScreen()
+                            else -> MainScaffold()
                         }
                     }
                 }

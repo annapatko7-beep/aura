@@ -33,6 +33,7 @@ qt_add_qml_module(aura-client
         qml/LoginPage.qml
         qml/ChatsPage.qml
         qml/ChatPage.qml
+        qml/OnboardingPage.qml
         qml/SettingsPage.qml
         qml/DesktopShell.qml
         qml/theme/AuraTheme.qml
