@@ -1,0 +1,150 @@
+# CI Aura: C++-ядро (сборка + unit), Python AI Service, сверка протокола
+# iOS/Android, JVM-тесты AuraKit (Android). Qt-клиент и iOS здесь не
+# собираются (нужны Qt 6 / macOS), APK — нужен Android SDK (Android Studio);
+# локальные проверки: qmlcachegen и tools/check_*_protocol.py (docs/TESTING.md).
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  cpp:
+    name: C++ сервер — сборка и тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libpq-dev
+
+      - name: Конфигурация
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DAURA_WITH_LIBPQ=ON -DAURA_WITH_CLIENT=OFF -DAURA_BUILD_TESTS=ON
+
+      - name: Сборка
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Unit-тесты
+        # add_test объявлен в server/CMakeLists — тесты живут в build/server.
+        run: ctest --test-dir build/server --output-on-failure
+
+  python:
+    name: Python AI Service — тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Зависимости
+        run: pip install -r ai/requirements.txt
+
+      - name: Тесты
+        run: cd ai && PYTHONPATH=. python -m pytest -q
+
+  protocol:
+    name: Протокол iOS/Android ↔ сервер и синтаксис e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Сверка типов сообщений iOS с хендлерами сервера
+        run: python3 tools/check_ios_protocol.py
+
+      - name: Сверка типов сообщений Android с хендлерами сервера
+        run: python3 tools/check_android_protocol.py
+
+      - name: Синтаксис e2e-прогона
+        run: python3 -m py_compile tools/e2e.py
+
+  android:
+    name: Android — JVM-тесты AuraKit (протокол без SDK)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # публикация лога в ветку arena/build-logs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Модуль :aurakit — чистый Kotlin/JVM (протокол, deep links), поэтому
+      # его тесты идут в CI без Android SDK. Gradle нужен только чтобы
+      # сгенерировать wrapper нужной версии (в репозитории wrapper не лежит).
+      - name: Gradle wrapper
+        working-directory: android
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gradle
+          gradle wrapper --gradle-version 8.7
+
+      - name: Тесты AuraKit
+        working-directory: android
+        run: |
+          ./gradlew :aurakit:test --no-daemon --stacktrace 2>&1 | tee ../aurakit-test.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Лог тестов AuraKit (для отладки)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurakit-test-log
+          path: aurakit-test.log
+
+      # Дубль лога в ветку arena/build-logs (песочница не видит артефакты).
+      - name: Диагностика (аннотации + публикация лога)
+        if: always()
+        run: |
+          if [ -f aurakit-test.log ]; then
+            grep -E "^e: |error:|FAILED" aurakit-test.log | tail -20 | while IFS= read -r line; do
+              printf '::error title=aurakit::%s\n' "$(printf '%s' "$line" | tr -d '\r' | cut -c1-400)"
+            done
+          fi
+          rm -f push-diag.log
+          echo "run ${{ github.run_id }} job aurakit" > push-diag.log
+          for i in 1 2 3; do
+            rm -rf logpub
+            {
+              git -c http.extraHeader="Authorization: token ${{ github.token }}" \
+                clone --depth 1 --branch arena/build-logs \
+                "https://github.com/${{ github.repository }}" logpub 2>&1
+              echo "clone exit=$?"
+            } >> push-diag.log
+            if [ ! -d logpub/.git ]; then
+              # клон не удался — создаём репозиторий локально
+              mkdir -p logpub
+              (
+                cd logpub
+                git init -q
+                git remote add origin "https://github.com/${{ github.repository }}"
+                git fetch --depth 1 origin arena/build-logs
+                git checkout -q -B arena/build-logs FETCH_HEAD
+              ) >> push-diag.log 2>&1
+            fi
+            [ -f aurakit-test.log ] && cp aurakit-test.log logpub/aurakit-test.log
+            (
+              cd logpub
+              git config user.name "aura-ci"
+              git config user.email "ci@aura.local"
+              git add -A 2>&1
+              git commit -m "aurakit log ${{ github.sha }} [skip ci]" 2>&1
+              git -c http.extraHeader="Authorization: token ${{ github.token }}" push origin HEAD:arena/build-logs 2>&1
+            ) >> push-diag.log 2>&1 && echo "push ok" >> push-diag.log && break
+            sleep 10
+          done
+          printf '::error title=aurakit-publish::%s\n' "$(tail -14 push-diag.log | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
+          exit 0

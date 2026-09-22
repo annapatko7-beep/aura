@@ -1,0 +1,119 @@
+# Сборка Android-клиента Aura (APK) — артефакт Actions.
+#
+# Результат: вкладка Actions → «Build Android APK» → Artifacts →
+# aura-android-debug (app-debug.apk). Это debug-сборка: ставится на
+# устройство напрямую, подписана debug-ключом. Для релиза в Google Play
+# нужен release + ваш keystore (см. docs/ANDROID.md).
+#
+# Без app/google-services.json (его нет в репозитории) APK собирается
+# без FCM — приложение честно показывает «Push не настроен».
+name: Build Android APK
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    name: Gradle — app-debug.apk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # публикация лога в ветку arena/build-logs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          # compileSdk/targetSdk проекта (android/app/build.gradle.kts).
+          packages: "platforms;android-34 build-tools;34.0.0 platform-tools"
+
+      - name: Gradle wrapper
+        working-directory: android
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gradle
+          gradle wrapper --gradle-version 8.7
+
+      - name: Сборка APK
+        working-directory: android
+        run: |
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee ../build.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Артефакт — APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-android-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+
+      - name: Артефакт — лог сборки (для отладки)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-android
+          path: build.log
+
+      # Песочница разработки не видит blob-хосты артефактов — дублируем лог
+      # в ветку arena/build-logs, откуда его можно прочитать обычным git.
+      - name: Диагностика (аннотации + публикация лога)
+        if: always()
+        run: |
+          # Ошибки компиляции — в аннотации прогона.
+          LOG=""
+          for f in android/app/build.log android/build.log build.log; do
+            [ -f "$f" ] && LOG="$f" && break
+          done
+          if [ -n "$LOG" ]; then
+            grep -E "^e: |error:|FAILURE" "$LOG" | tail -20 | while IFS= read -r line; do
+              printf '::error title=android-build::%s\n' "$(printf '%s' "$line" | tr -d '\r' | cut -c1-400)"
+            done
+            # Хвост лога целиком — в одну аннотацию (grep может не поймать
+            # формат сообщения Gradle).
+            # Секция "What went wrong" — там текст настоящей ошибки.
+            printf '::error title=android-cause::%s\n' "$(awk '/What went wrong/{f=1} f{print} f&&/BUILD FAILED/{exit}' "$LOG" | head -25 | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
+            # Первые 30 строк лога (задача и конфигурация).
+            printf '::error title=android-head::%s\n' "$(head -30 "$LOG" | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
+          fi
+          # Сам лог — в ветку arena/build-logs (песочница читает её git'ом).
+          rm -f push-diag.log
+          echo "run ${{ github.run_id }} job android, log=$LOG" > push-diag.log
+          for i in 1 2 3; do
+            rm -rf logpub
+            {
+              git -c http.extraHeader="Authorization: token ${{ github.token }}" \
+                clone --depth 1 --branch arena/build-logs \
+                "https://github.com/${{ github.repository }}" logpub 2>&1
+              echo "clone exit=$?"
+            } >> push-diag.log
+            if [ ! -d logpub/.git ]; then
+              # клон не удался — создаём репозиторий локально
+              mkdir -p logpub
+              (
+                cd logpub
+                git init -q
+                git remote add origin "https://github.com/${{ github.repository }}"
+                git fetch --depth 1 origin arena/build-logs
+                git checkout -q -B arena/build-logs FETCH_HEAD
+              ) >> push-diag.log 2>&1
+            fi
+            [ -n "$LOG" ] && cp "$LOG" logpub/android-build.log
+            (
+              cd logpub
+              git config user.name "aura-ci"
+              git config user.email "ci@aura.local"
+              git add -A 2>&1
+              git commit -m "android log ${{ github.sha }} [skip ci]" 2>&1
+              git -c http.extraHeader="Authorization: token ${{ github.token }}" push origin HEAD:arena/build-logs 2>&1
+            ) >> push-diag.log 2>&1 && echo "push ok" >> push-diag.log && break
+            sleep 10
+          done
+          printf '::error title=android-publish::%s\n' "$(tail -14 push-diag.log | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
+          exit 0

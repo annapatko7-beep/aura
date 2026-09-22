@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Шорткаты лаунчера (долгое нажатие на иконке) — официальный механизм Android.
+  Каждый открывает приложение по deep link aura:// — та же маршрутизация,
+  что и у Siri/Команд на iOS (docs/MOBILE_FEATURES.md).
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="ask"
+        android:enabled="true"
+        android:icon="@drawable/ic_aura"
+        android:shortcutShortLabel="@string/shortcut_ask_short"
+        android:shortcutLongLabel="@string/shortcut_ask_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="ai.aura.app"
+            android:targetClass="ai.aura.app.MainActivity"
+            android:data="aura://ask" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="voice"
+        android:enabled="true"
+        android:icon="@drawable/ic_aura"
+        android:shortcutShortLabel="@string/shortcut_voice_short"
+        android:shortcutLongLabel="@string/shortcut_voice_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="ai.aura.app"
+            android:targetClass="ai.aura.app.MainActivity"
+            android:data="aura://voice" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="task"
+        android:enabled="true"
+        android:icon="@drawable/ic_aura"
+        android:shortcutShortLabel="@string/shortcut_task_short"
+        android:shortcutLongLabel="@string/shortcut_task_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="ai.aura.app"
+            android:targetClass="ai.aura.app.MainActivity"
+            android:data="aura://tasks?new=1" />
+    </shortcut>
+</shortcuts>

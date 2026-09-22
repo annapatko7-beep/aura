@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Aura для Android (этап 11). Разрешения — только необходимые
+  (принцип из docs/MOBILE_FEATURES.md):
+    INTERNET           — WS-соединение с сервером Aura;
+    POST_NOTIFICATIONS — уведомления (Android 13+, runtime-запрос);
+    RECORD_AUDIO       — голосовой ввод, запрашивается только в момент
+                         нажатия кнопки микрофона.
+  Никаких Accessibility-сервисов, фоновых слушателей и прочих разрешений.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- FCM не обязателен: без google-services.json приложение работает без push. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <application
+        android:label="@string/app_name"
+        android:icon="@drawable/ic_aura"
+        android:theme="@style/Theme.Aura"
+        android:supportsRtl="true"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic: стендовый сервер работает без TLS
+             (ws://); в проде за терминирующим прокси используйте wss://
+             и ограничьте cleartext network-security-config. -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.Aura">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Deep links aura:// (включая возврат Google OAuth). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="aura" />
+            </intent-filter>
+            <!-- Голосовой запрос через ассистента: «ок, Google, открой Ауру»
+                 + шорткаты лаунчера (res/xml/shortcuts.xml). -->
+            <intent-filter>
+                <action android:name="android.intent.action.ASSIST" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- FCM: incoming push. Автоинициализация включена только когда
+             google-services.json на месте (см. build.gradle.kts). -->
+        <service
+            android:name=".push.FcmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Канал уведомлений создаётся кодом (Notifications.CHANNEL_ID),
+             метаданные FCM задают тот же канал для системной доставки. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="aura" />
+    </application>
+</manifest>

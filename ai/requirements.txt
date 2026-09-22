@@ -1,0 +1,10 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+httpx>=0.27
+# multipart/form-data для Whisper-совместимого /v1/speech/transcribe
+python-multipart>=0.0.9
+# опционально: реальная БД для автономного режима AI-сервиса
+# psycopg[binary]>=3.1
+# для тестов
+pytest>=8.0

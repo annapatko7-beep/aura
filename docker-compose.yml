@@ -1,0 +1,97 @@
+# Aura — стек: PostgreSQL + Python AI Service + C++-сервер.
+#
+#   docker compose up --build postgres ai
+#   docker compose up --build server
+#   cd client && cmake -B build && cmake --build build   # Qt-клиент собирается на хосте
+#
+# Qt-клиент в compose не входит: ему нужен GUI/дисплей, удобнее собирать локально.
+# Секреты передавайте через окружение или .env-файл compose (AURA_JWT_SECRET,
+# AURA_2FA_KEY, OPENAI_API_KEY, AURA_GOOGLE_* — см. docs/SETUP.md).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aura
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aura}
+      POSTGRES_DB: aura
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Схема, миграции и демо-данные применяются при первом старте
+      # (файлы исполняются по алфавиту; миграции идемпотентны).
+      - ./schema/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./schema/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+      - ./schema/migrations/2026_09_20_notifications.sql:/docker-entrypoint-initdb.d/03-migration-notifications.sql:ro
+      - ./schema/migrations/2026_09_20_push_fcm.sql:/docker-entrypoint-initdb.d/04-migration-push-fcm.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aura -d aura"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ai:
+    build:
+      context: ./ai
+    environment:
+      AURA_AI_HOST: 0.0.0.0
+      AURA_AI_PORT: 8000
+      AURA_AI_TOKEN: ${AURA_AI_TOKEN:-}
+      AURA_LLM_PROVIDER: ${AURA_LLM_PROVIDER:-mock}   # mock | openai
+      AURA_LLM_MODEL: ${AURA_LLM_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      AURA_STT_PROVIDER: ${AURA_STT_PROVIDER:-mock}
+      AURA_STT_URL: ${AURA_STT_URL:-}
+      AURA_TOOLS_BACKEND: ${AURA_TOOLS_BACKEND:-sandbox}
+      AURA_MEMORY_BACKEND: postgresql://aura:${POSTGRES_PASSWORD:-aura}@postgres:5432/aura
+      AURA_PREVIEW_DIR: /app/preview
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./preview:/app/preview:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  server:
+    build:
+      context: ./server
+    environment:
+      AURA_HOST: 0.0.0.0
+      AURA_PORT: 9000
+      AURA_DATABASE_URL: postgresql://aura:${POSTGRES_PASSWORD:-aura}@postgres:5432/aura
+      AURA_AI_URL: http://ai:8000
+      AURA_AI_TOKEN: ${AURA_AI_TOKEN:-}
+      AURA_JWT_SECRET: ${AURA_JWT_SECRET:-change-me-in-production}
+      AURA_2FA_KEY: ${AURA_2FA_KEY:-}
+      AURA_MAIL_DRIVER: ${AURA_MAIL_DRIVER:-dev}
+      AURA_TOOLS_MODE: ${AURA_TOOLS_MODE:-sandbox}
+      AURA_PUSH_DRIVER: ${AURA_PUSH_DRIVER:-dev}
+      AURA_PUSH_WEBHOOK_URL: ${AURA_PUSH_WEBHOOK_URL:-}
+      AURA_GOOGLE_CLIENT_ID: ${AURA_GOOGLE_CLIENT_ID:-}
+      AURA_GOOGLE_CLIENT_SECRET: ${AURA_GOOGLE_CLIENT_SECRET:-}
+      AURA_LOG_LEVEL: ${AURA_LOG_LEVEL:-info}
+    ports:
+      - "9000:9000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+    healthcheck:
+      # Сервер говорит по WS; проверяем, что порт принимает соединения.
+      test: ["CMD-SHELL", "timeout 2 bash -c 'echo > /dev/tcp/127.0.0.1/9000' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:
