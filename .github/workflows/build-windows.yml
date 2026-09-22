@@ -1,0 +1,73 @@
+# Сборка desktop-клиента Aura под Windows (.exe) — артефакт Actions.
+#
+# Результат: вкладка Actions → «Build Windows client» → Artifacts →
+# aura-desktop-windows.zip (aura-client.exe + Qt-рантайм + libpq).
+# Подпись кода и установщик (NSIS/MSI) — отдельно, нужны ваши сертификаты.
+name: Build Windows client
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Qt 6 / MSVC — aura-client.exe
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Qt 6.7 (msvc2019_64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.7.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+          # Компоненты из client/CMakeLists.txt (Multimedia, TextToSpeech —
+          # голос/озвучка; WebSockets — протокол; QuickControls2 — UI).
+          modules: qtwebsockets qtmultimedia qttexttospeech
+          cache: true
+
+      - name: libpq (PostgreSQL client)
+        shell: pwsh
+        run: |
+          # Серверная часть клиента не нужна, но ядро (aura-core) линкуется
+          # с libpq при AURA_WITH_LIBPQ=ON; берём официальные бинарники EDB.
+          curl.exe -L -o pgsql.zip https://get.enterprisedb.com/postgresql/postgresql-16.4-1-windows-x64-binaries.zip
+          Expand-Archive pgsql.zip -DestinationPath pgsql
+          echo "PGROOT=${{ github.workspace }}\pgsql\pgsql" >> $env:GITHUB_ENV
+
+      - name: Конфигурация
+        shell: pwsh
+        run: >
+          cmake -S . -B build -G "Ninja"
+          -DCMAKE_BUILD_TYPE=Release
+          -DAURA_WITH_CLIENT=ON -DAURA_WITH_LIBPQ=ON -DAURA_BUILD_TESTS=OFF
+          -DPostgreSQL_INCLUDE_DIR="$env:PGROOT\include"
+          -DPostgreSQL_LIBRARY_DIR="$env:PGROOT\lib"
+          -DPostgreSQL_LIBRARY="$env:PGROOT\lib\libpq.lib"
+
+      - name: Сборка
+        shell: pwsh
+        run: cmake --build build --config Release
+
+      - name: Упаковка (windeployqt + libpq)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build\client\Release\aura-client.exe dist\ -ErrorAction SilentlyContinue
+          Copy-Item build\client\aura-client.exe dist\ -ErrorAction SilentlyContinue
+          windeployqt --release --no-translations dist\aura-client.exe
+          Copy-Item "$env:PGROOT\bin\libpq.dll" dist\
+          # windeployqt не тянет зависимости libpq — добираем из поставки PG.
+          foreach ($dll in @("libssl-3-x64.dll", "libcrypto-3-x64.dll", "libiconv-2.dll", "libintl-9.dll")) {
+            if (Test-Path "$env:PGROOT\bin\$dll") { Copy-Item "$env:PGROOT\bin\$dll" dist\ }
+          }
+
+      - name: Артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-desktop-windows
+          path: dist/

@@ -107,6 +107,15 @@ cmake --build build/client -j
 Адрес сервера задаётся в окне входа (сохраняется в QSettings вместе с
 токенами). Для продакшена — `wss://` за TLS-прокси.
 
+### Готовый .exe для Windows — через GitHub Actions
+
+Локальная сборка не обязательна: workflow **`build-windows.yml`** на каждый
+push собирает `aura-client.exe` с Qt-рантаймом и libpq (Windows Server 2022,
+Qt 6.7 MSVC). Скачать: вкладка **Actions** → «Build Windows client» →
+последний запуск → **Artifacts → aura-desktop-windows** (zip). Это релизная
+сборка без подписи кода; для распространения подпишите exe своим
+сертификатом и/или соберите установщик (NSIS/MSI).
+
 ## 6. iOS-клиент
 
 ```bash

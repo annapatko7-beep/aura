@@ -28,6 +28,16 @@ android/
 
 ## Сборка
 
+### Без установки инструментов: GitHub Actions
+
+Workflow **`build-android.yml`** собирает `app-debug.apk` на каждый push:
+вкладка **Actions** репозитория → «Build Android APK» → последний запуск →
+**Artifacts → aura-android-debug**. Debug-APK ставится на устройство
+напрямую (подпись debug-ключом); для Google Play соберите release и
+подпишите своим keystore (ниже).
+
+### Локально
+
 Нужны: **Android Studio** (Koala или новее) либо JDK 17 + Android SDK 34.
 Gradle-обёртка в репозитории не лежит (бинарь) — при первом открытии
 Android Studio сгенерирует её сам, либо вручную:
