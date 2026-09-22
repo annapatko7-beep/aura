@@ -19,6 +19,8 @@ jobs:
   apk:
     name: Gradle — app-debug.apk
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # публикация лога в ветку arena/build-logs
     steps:
       - uses: actions/checkout@v4
 
@@ -64,11 +66,13 @@ jobs:
       - name: Публикация лога (ветка arena/build-logs)
         if: always()
         run: |
+          set -x
           git config user.name "aura-ci"
           git config user.email "ci@aura.local"
           git fetch origin arena/build-logs
           git checkout -B buildlogs FETCH_HEAD
-          cp ../build.log android-build.log
+          cp build.log android-build.log 2>/dev/null || true
           git add -A
-          git commit -m "android log ${{ github.sha }} [skip ci]"
+          git commit -m "android log ${{ github.sha }} [skip ci]" || true
           git push origin HEAD:arena/build-logs
+          exit 0

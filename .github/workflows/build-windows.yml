@@ -15,21 +15,35 @@ jobs:
   windows:
     name: Qt 6 / MSVC — aura-client.exe
     runs-on: windows-2022
+    permissions:
+      contents: write   # публикация лога в ветку arena/build-logs
     steps:
       - uses: actions/checkout@v4
 
-      # Qt ставим напрямую aqt (без обёрток): версию/архитектуру/модули
-      # видно в логе, который уходит артефактом build-log.
-      - name: Qt 6.7 (aqt, msvc2019_64)
+      # Qt ставим напрямую aqt: перебираем связки версия/компилятор, пока
+      # одна не встанет (зеркала и состав архивов со временем меняются).
+      - name: Qt 6 (aqt, MSVC x64)
         shell: pwsh
         run: |
           pip install aqtinstall 2>&1 | Tee-Object -FilePath qt-install.log
-          python -m aqt list-qt windows desktop --arch 6.7.3 2>&1 | Tee-Object -Append qt-install.log
-          python -m aqt install-qt windows desktop 6.7.3 win64_msvc2019_64 `
-            -m qtwebsockets qtmultimedia qttexttospeech `
-            -O C:\Qt 2>&1 | Tee-Object -Append qt-install.log
-          echo "CMAKE_PREFIX_PATH=C:\Qt\6.7.3\msvc2019_64" >> $env:GITHUB_ENV
-          echo "C:\Qt\6.7.3\msvc2019_64\bin" >> $env:GITHUB_PATH
+          python -m aqt version 2>&1 | Tee-Object -Append qt-install.log
+          $ok = $false
+          foreach ($combo in @(
+            @("6.7.3", "win64_msvc2019_64", "C:\Qt\6.7.3\msvc2019_64"),
+            @("6.8.3", "win64_msvc2022_64", "C:\Qt\6.8.3\msvc2022_64"),
+            @("6.6.3", "win64_msvc2019_64", "C:\Qt\6.6.3\msvc2019_64")
+          )) {
+            python -m aqt install-qt windows desktop $combo[0] $combo[1] `
+              -m qtwebsockets qtmultimedia qttexttospeech `
+              -O C:\Qt 2>&1 | Tee-Object -Append qt-install.log
+            if ($LASTEXITCODE -eq 0 -and (Test-Path "$($combo[2])\bin\qmake.exe")) {
+              echo "CMAKE_PREFIX_PATH=$($combo[2])" >> $env:GITHUB_ENV
+              echo "$($combo[2])\bin" >> $env:GITHUB_PATH
+              $ok = $true
+              break
+            }
+          }
+          if (-not $ok) { exit 1 }
 
       - name: libpq (PostgreSQL client)
         shell: pwsh
@@ -86,13 +100,14 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Continue"
           git config user.name "aura-ci"
           git config user.email "ci@aura.local"
-          git fetch origin arena/build-logs
-          git checkout -B buildlogs FETCH_HEAD
-          Copy-Item qt-install.log, build.log . -ErrorAction SilentlyContinue
-          Rename-Item qt-install.log windows-qt-install.log -ErrorAction SilentlyContinue
-          Rename-Item build.log windows-build.log -ErrorAction SilentlyContinue
-          git add -A
-          git commit -m "windows log ${{ github.sha }} [skip ci]"
-          git push origin HEAD:arena/build-logs
+          git fetch origin arena/build-logs 2>&1
+          git checkout -B buildlogs FETCH_HEAD 2>&1
+          if (Test-Path qt-install.log) { Copy-Item qt-install.log windows-qt-install.log -Force }
+          if (Test-Path build.log) { Copy-Item build.log windows-build.log -Force }
+          git add -A 2>&1
+          git commit -m "windows log ${{ github.sha }} [skip ci]" 2>&1
+          git push origin HEAD:arena/build-logs 2>&1
+          exit 0
