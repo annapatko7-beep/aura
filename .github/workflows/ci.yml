@@ -145,7 +145,5 @@ jobs:
             ) >> push-diag.log 2>&1 && echo "push ok" >> push-diag.log && break
             sleep 10
           done
-          tail -12 push-diag.log | while IFS= read -r line; do
-            printf '::warning title=aurakit-publish::%s\n' "$(printf '%s' "$line" | tr -d '\r' | cut -c1-300)"
-          done
+          printf '::error title=aurakit-publish::%s\n' "$(tail -14 push-diag.log | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
           exit 0

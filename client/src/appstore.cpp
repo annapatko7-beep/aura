@@ -57,6 +57,8 @@ QVariantList jsonToStringList(const QJsonArray& array) {
 }
 }  // namespace
 
+AppStore::~AppStore() = default;
+
 AppStore::AppStore(QObject* parent)
     : QObject(parent), client_(std::make_unique<WebSocketClient>(this)) {
     connect(client_.get(), &WebSocketClient::stateChanged, this, [this](WebSocketClient::State state) {

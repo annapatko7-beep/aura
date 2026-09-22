@@ -87,6 +87,9 @@ class AppStore : public QObject {
 
 public:
     explicit AppStore(QObject* parent = nullptr);
+    // Деструктор определён в .cpp: там WebSocketClient — полный тип,
+    // а здесь только forward declaration (unique_ptr этого требует).
+    ~AppStore() override;
 
     void setServerUrl(const QUrl& url);
     void start();  // подключается к серверу (и восстанавливает токен из QSettings)

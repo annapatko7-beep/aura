@@ -59,17 +59,17 @@ jobs:
           # Собираем только клиент: сервер — POSIX-код (сокеты/poll), на
           # Windows он не нужен и не собирается (AURA_WITH_SERVER=OFF).
           # Клиент libpq не использует — сервер у пользователя живёт в Docker.
-          cmake -S . -B build -G "Ninja" `
-            -DCMAKE_BUILD_TYPE=Release `
+          # Только MSVC (cl.exe): mingw64 на раннере конфликтует с MSVC-сборкой Qt.
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
             -DAURA_WITH_CLIENT=ON -DAURA_WITH_SERVER=OFF 2>&1 | Tee-Object -FilePath build.log
-          cmake --build build 2>&1 | Tee-Object -Append build.log
+          cmake --build build --config Release 2>&1 | Tee-Object -Append build.log
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Упаковка (windeployqt)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item build\client\aura-client.exe dist\
+          Copy-Item build\client\Release\aura-client.exe dist\
           windeployqt --release --no-translations dist\aura-client.exe 2>&1 | Tee-Object -Append build.log
 
       - name: Артефакт — exe
@@ -137,9 +137,8 @@ jobs:
             if ($code -eq 0) { break }
             Start-Sleep -Seconds 10
           }
-          foreach ($l in (Get-Content push-diag.log | Select-Object -Last 12)) {
-            $m = ($l -replace "[\r\n]", " ")
-            if ($m.Length -gt 300) { $m = $m.Substring(0, 300) }
-            Write-Output "::warning title=windows-publish::$m"
-          }
+          $m = ((Get-Content push-diag.log | Select-Object -Last 14) -join "~")
+          $m = ($m -replace "[\r\n]", " ")
+          if ($m.Length -gt 1500) { $m = $m.Substring(0, 1500) }
+          Write-Output "::error title=windows-publish::$m"
           exit 0
