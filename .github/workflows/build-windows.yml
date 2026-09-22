@@ -109,13 +109,23 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-          git config user.name "aura-ci"
-          git config user.email "ci@aura.local"
-          git fetch origin arena/build-logs 2>&1
-          git checkout -B buildlogs FETCH_HEAD 2>&1
-          if (Test-Path qt-install.log) { Copy-Item qt-install.log windows-qt-install.log -Force }
-          if (Test-Path build.log) { Copy-Item build.log windows-build.log -Force }
-          git add -A 2>&1
-          git commit -m "windows log ${{ github.sha }} [skip ci]" 2>&1
-          git push origin HEAD:arena/build-logs 2>&1
+          # Отдельный клон вне workspace: git add -A не тянет мусор сборки,
+          # retry разруливает гонку одновременных публикаций разных job'ов.
+          for ($i = 1; $i -le 3; $i++) {
+            Remove-Item -Recurse -Force logpub -ErrorAction SilentlyContinue
+            git clone --depth 1 --branch arena/build-logs `
+              https://github.com/${{ github.repository }} logpub 2>&1
+            if (Test-Path qt-install.log) { Copy-Item qt-install.log logpub\windows-qt-install.log -Force }
+            if (Test-Path build.log) { Copy-Item build.log logpub\windows-build.log -Force }
+            Push-Location logpub
+            git config user.name "aura-ci"
+            git config user.email "ci@aura.local"
+            git add -A
+            git commit -m "windows log ${{ github.sha }} [skip ci]" 2>&1
+            git push origin HEAD:arena/build-logs 2>&1
+            $code = $LASTEXITCODE
+            Pop-Location
+            if ($code -eq 0) { break }
+            Start-Sleep -Seconds 10
+          }
           exit 0

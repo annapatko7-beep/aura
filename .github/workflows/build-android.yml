@@ -66,13 +66,21 @@ jobs:
       - name: Публикация лога (ветка arena/build-logs)
         if: always()
         run: |
-          set -x
-          git config user.name "aura-ci"
-          git config user.email "ci@aura.local"
-          git fetch origin arena/build-logs
-          git checkout -B buildlogs FETCH_HEAD
-          cp build.log android-build.log 2>/dev/null || true
-          git add -A
-          git commit -m "android log ${{ github.sha }} [skip ci]" || true
-          git push origin HEAD:arena/build-logs
+          # Отдельный клон вне workspace + retry (гонка одновременных job'ов).
+          for i in 1 2 3; do
+            rm -rf logpub
+            git clone --depth 1 --branch arena/build-logs \
+              "https://github.com/${{ github.repository }}" logpub || true
+            cp android/app/build.log logpub/android-build.log 2>/dev/null || \
+              cp build.log logpub/android-build.log 2>/dev/null || true
+            (
+              cd logpub
+              git config user.name "aura-ci"
+              git config user.email "ci@aura.local"
+              git add -A
+              git commit -m "android log ${{ github.sha }} [skip ci]" || true
+              git push origin HEAD:arena/build-logs
+            ) && break
+            sleep 10
+          done
           exit 0
