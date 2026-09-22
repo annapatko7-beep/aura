@@ -106,23 +106,35 @@ jobs:
           path: aurakit-test.log
 
       # Дубль лога в ветку arena/build-logs (песочница не видит артефакты).
-      - name: Публикация лога (ветка arena/build-logs)
+      - name: Диагностика (аннотации + публикация лога)
         if: always()
         run: |
-          # Отдельный клон вне workspace + retry (гонка одновременных job'ов).
+          if [ -f aurakit-test.log ]; then
+            grep -E "^e: |error:|FAILED" aurakit-test.log | tail -20 | while IFS= read -r line; do
+              printf '::error title=aurakit::%s\n' "$(printf '%s' "$line" | tr -d '\r' | cut -c1-400)"
+            done
+          fi
+          rm -f push-diag.log
+          echo "run ${{ github.run_id }} job aurakit" > push-diag.log
           for i in 1 2 3; do
             rm -rf logpub
-            git clone --depth 1 --branch arena/build-logs \
-              "https://github.com/${{ github.repository }}" logpub || true
-            cp aurakit-test.log logpub/aurakit-test.log 2>/dev/null || true
+            {
+              git clone --depth 1 --branch arena/build-logs \
+                "https://github.com/${{ github.repository }}" logpub 2>&1
+              echo "clone exit=$?"
+            } >> push-diag.log
+            [ -f aurakit-test.log ] && cp aurakit-test.log logpub/aurakit-test.log
             (
               cd logpub
               git config user.name "aura-ci"
               git config user.email "ci@aura.local"
-              git add -A
-              git commit -m "aurakit log ${{ github.sha }} [skip ci]" || true
-              git push origin HEAD:arena/build-logs
-            ) && break
+              git add -A 2>&1
+              git commit -m "aurakit log ${{ github.sha }} [skip ci]" 2>&1
+              git push origin HEAD:arena/build-logs 2>&1
+            ) >> push-diag.log 2>&1 && echo "push ok" >> push-diag.log && break
             sleep 10
+          done
+          tail -12 push-diag.log | while IFS= read -r line; do
+            printf '::warning title=aurakit-publish::%s\n' "$(printf '%s' "$line" | tr -d '\r' | cut -c1-300)"
           done
           exit 0

@@ -104,28 +104,46 @@ jobs:
 
       # Песочница разработки не видит blob-хосты артефактов — дублируем логи
       # в ветку arena/build-logs, откуда их можно прочитать обычным git.
-      - name: Публикация лога (ветка arena/build-logs)
+      # Ошибки компиляции — в аннотации прогона (читаются через API),
+      # сам лог — в ветку arena/build-logs.
+      - name: Диагностика (аннотации + публикация лога)
         if: always()
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-          # Отдельный клон вне workspace: git add -A не тянет мусор сборки,
-          # retry разруливает гонку одновременных публикаций разных job'ов.
+          if (Test-Path build.log) {
+            $lines = Select-String -Path build.log -Pattern "error|FAILED" | Select-Object -Last 20
+            foreach ($l in $lines) {
+              $m = ($l.Line -replace "[\r\n]", " ")
+              if ($m.Length -gt 400) { $m = $m.Substring(0, 400) }
+              Write-Output "::error title=windows-build::$m"
+            }
+          }
+          $pub = New-Item -ItemType File -Force push-diag.log
+          Add-Content $pub "run ${{ github.run_id }} job windows"
           for ($i = 1; $i -le 3; $i++) {
             Remove-Item -Recurse -Force logpub -ErrorAction SilentlyContinue
             git clone --depth 1 --branch arena/build-logs `
-              https://github.com/${{ github.repository }} logpub 2>&1
+              "https://github.com/${{ github.repository }}" logpub 2>&1 |
+              Add-Content $pub
+            Add-Content $pub "clone exit=$LASTEXITCODE"
             if (Test-Path qt-install.log) { Copy-Item qt-install.log logpub\windows-qt-install.log -Force }
             if (Test-Path build.log) { Copy-Item build.log logpub\windows-build.log -Force }
             Push-Location logpub
             git config user.name "aura-ci"
             git config user.email "ci@aura.local"
-            git add -A
-            git commit -m "windows log ${{ github.sha }} [skip ci]" 2>&1
-            git push origin HEAD:arena/build-logs 2>&1
+            git add -A 2>&1 | Add-Content $pub
+            git commit -m "windows log ${{ github.sha }} [skip ci]" 2>&1 | Add-Content $pub
+            git push origin HEAD:arena/build-logs 2>&1 | Add-Content $pub
             $code = $LASTEXITCODE
+            Add-Content $pub "push exit=$code"
             Pop-Location
             if ($code -eq 0) { break }
             Start-Sleep -Seconds 10
+          }
+          foreach ($l in (Get-Content push-diag.log | Select-Object -Last 12)) {
+            $m = ($l -replace "[\r\n]", " ")
+            if ($m.Length -gt 300) { $m = $m.Substring(0, 300) }
+            Write-Output "::warning title=windows-publish::$m"
           }
           exit 0

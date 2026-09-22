@@ -63,24 +63,41 @@ jobs:
 
       # Песочница разработки не видит blob-хосты артефактов — дублируем лог
       # в ветку arena/build-logs, откуда его можно прочитать обычным git.
-      - name: Публикация лога (ветка arena/build-logs)
+      - name: Диагностика (аннотации + публикация лога)
         if: always()
         run: |
-          # Отдельный клон вне workspace + retry (гонка одновременных job'ов).
+          # Ошибки компиляции — в аннотации прогона.
+          LOG=""
+          for f in android/app/build.log android/build.log build.log; do
+            [ -f "$f" ] && LOG="$f" && break
+          done
+          if [ -n "$LOG" ]; then
+            grep -E "^e: |error:|FAILURE" "$LOG" | tail -20 | while IFS= read -r line; do
+              printf '::error title=android-build::%s\n' "$(printf '%s' "$line" | tr -d '\r' | cut -c1-400)"
+            done
+          fi
+          # Сам лог — в ветку arena/build-logs (песочница читает её git'ом).
+          rm -f push-diag.log
+          echo "run ${{ github.run_id }} job android, log=$LOG" > push-diag.log
           for i in 1 2 3; do
             rm -rf logpub
-            git clone --depth 1 --branch arena/build-logs \
-              "https://github.com/${{ github.repository }}" logpub || true
-            cp android/app/build.log logpub/android-build.log 2>/dev/null || \
-              cp build.log logpub/android-build.log 2>/dev/null || true
+            {
+              git clone --depth 1 --branch arena/build-logs \
+                "https://github.com/${{ github.repository }}" logpub 2>&1
+              echo "clone exit=$?"
+            } >> push-diag.log
+            [ -n "$LOG" ] && cp "$LOG" logpub/android-build.log
             (
               cd logpub
               git config user.name "aura-ci"
               git config user.email "ci@aura.local"
-              git add -A
-              git commit -m "android log ${{ github.sha }} [skip ci]" || true
-              git push origin HEAD:arena/build-logs
-            ) && break
+              git add -A 2>&1
+              git commit -m "android log ${{ github.sha }} [skip ci]" 2>&1
+              git push origin HEAD:arena/build-logs 2>&1
+            ) >> push-diag.log 2>&1 && echo "push ok" >> push-diag.log && break
             sleep 10
+          done
+          tail -12 push-diag.log | while IFS= read -r line; do
+            printf '::warning title=android-publish::%s\n' "$(printf '%s' "$line" | tr -d '\r' | cut -c1-300)"
           done
           exit 0
