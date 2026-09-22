@@ -29,7 +29,8 @@ class ProtocolFrameTests {
         val obj = decoded as kotlinx.serialization.json.JsonObject
         assertEquals("1", (obj["id"] as kotlinx.serialization.json.JsonPrimitive).content)
         assertEquals("auth.login", (obj["type"] as kotlinx.serialization.json.JsonPrimitive).content)
-        assertEquals("a@b.c", obj["payload"]!!.str("email"))
+        val payload = obj["payload"] as kotlinx.serialization.json.JsonObject
+        assertEquals("a@b.c", payload.str("email"))
     }
 
     @Test

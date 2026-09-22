@@ -53,38 +53,24 @@ jobs:
           }
           if (-not $ok) { exit 1 }
 
-      - name: libpq (PostgreSQL client)
-        shell: pwsh
-        run: |
-          # Ядро (aura-core) линкуется с libpq при AURA_WITH_LIBPQ=ON;
-          # берём официальные бинарники EDB.
-          curl.exe -L -o pgsql.zip https://get.enterprisedb.com/postgresql/postgresql-16.4-1-windows-x64-binaries.zip
-          Expand-Archive pgsql.zip -DestinationPath pgsql
-          echo "PGROOT=${{ github.workspace }}\pgsql\pgsql" >> $env:GITHUB_ENV
-
       - name: Конфигурация и сборка
         shell: pwsh
         run: |
+          # Собираем только клиент: сервер — POSIX-код (сокеты/poll), на
+          # Windows он не нужен и не собирается (AURA_WITH_SERVER=OFF).
+          # Клиент libpq не использует — сервер у пользователя живёт в Docker.
           cmake -S . -B build -G "Ninja" `
             -DCMAKE_BUILD_TYPE=Release `
-            -DAURA_WITH_CLIENT=ON -DAURA_WITH_LIBPQ=ON -DAURA_BUILD_TESTS=OFF `
-            -DPostgreSQL_INCLUDE_DIR="$env:PGROOT\include" `
-            -DPostgreSQL_LIBRARY_DIR="$env:PGROOT\lib" `
-            -DPostgreSQL_LIBRARY="$env:PGROOT\lib\libpq.lib" 2>&1 | Tee-Object -FilePath build.log
+            -DAURA_WITH_CLIENT=ON -DAURA_WITH_SERVER=OFF 2>&1 | Tee-Object -FilePath build.log
           cmake --build build 2>&1 | Tee-Object -Append build.log
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      - name: Упаковка (windeployqt + libpq)
+      - name: Упаковка (windeployqt)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item build\client\aura-client.exe dist\
           windeployqt --release --no-translations dist\aura-client.exe 2>&1 | Tee-Object -Append build.log
-          Copy-Item "$env:PGROOT\bin\libpq.dll" dist\
-          # windeployqt не тянет зависимости libpq — добираем из поставки PG.
-          foreach ($dll in @("libssl-3-x64.dll", "libcrypto-3-x64.dll", "libiconv-2.dll", "libintl-9.dll")) {
-            if (Test-Path "$env:PGROOT\bin\$dll") { Copy-Item "$env:PGROOT\bin\$dll" dist\ }
-          }
 
       - name: Артефакт — exe
         if: success()
@@ -127,6 +113,16 @@ jobs:
               "https://github.com/${{ github.repository }}" logpub 2>&1 |
               Add-Content $pub
             Add-Content $pub "clone exit=$LASTEXITCODE"
+            if (-not (Test-Path logpub\.git)) {
+              # клон не удался — создаём репозиторий локально
+              New-Item -ItemType Directory -Force logpub | Out-Null
+              Push-Location logpub
+              git init -q 2>&1 | Add-Content $pub
+              git remote add origin "https://github.com/${{ github.repository }}" 2>&1
+              git fetch --depth 1 origin arena/build-logs 2>&1 | Add-Content $pub
+              git checkout -q -B arena/build-logs FETCH_HEAD 2>&1 | Add-Content $pub
+              Pop-Location
+            }
             if (Test-Path qt-install.log) { Copy-Item qt-install.log logpub\windows-qt-install.log -Force }
             if (Test-Path build.log) { Copy-Item build.log logpub\windows-build.log -Force }
             Push-Location logpub

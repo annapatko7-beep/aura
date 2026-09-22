@@ -123,6 +123,17 @@ jobs:
                 "https://github.com/${{ github.repository }}" logpub 2>&1
               echo "clone exit=$?"
             } >> push-diag.log
+            if [ ! -d logpub/.git ]; then
+              # клон не удался — создаём репозиторий локально
+              mkdir -p logpub
+              (
+                cd logpub
+                git init -q
+                git remote add origin "https://github.com/${{ github.repository }}"
+                git fetch --depth 1 origin arena/build-logs
+                git checkout -q -B arena/build-logs FETCH_HEAD
+              ) >> push-diag.log 2>&1
+            fi
             [ -f aurakit-test.log ] && cp aurakit-test.log logpub/aurakit-test.log
             (
               cd logpub

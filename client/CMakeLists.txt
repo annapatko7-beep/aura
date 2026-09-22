@@ -62,6 +62,8 @@ target_link_libraries(aura-client PRIVATE
     Qt6::TextToSpeech
 )
 
-target_compile_options(aura-client PRIVATE -Wall -Wextra)
+if(NOT MSVC)
+    target_compile_options(aura-client PRIVATE -Wall -Wextra)
+endif()
 
 install(TARGETS aura-client RUNTIME DESTINATION bin)
