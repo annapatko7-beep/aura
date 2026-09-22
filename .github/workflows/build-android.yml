@@ -41,10 +41,20 @@ jobs:
 
       - name: Сборка APK
         working-directory: android
-        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee ../build.log
+          exit ${PIPESTATUS[0]}
 
-      - name: Артефакт
+      - name: Артефакт — APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: aura-android-debug
           path: android/app/build/outputs/apk/debug/*.apk
+
+      - name: Артефакт — лог сборки (для отладки)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-android
+          path: build.log

@@ -92,4 +92,13 @@ jobs:
 
       - name: Тесты AuraKit
         working-directory: android
-        run: ./gradlew :aurakit:test --no-daemon
+        run: |
+          ./gradlew :aurakit:test --no-daemon --stacktrace 2>&1 | tee ../aurakit-test.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Лог тестов AuraKit (для отладки)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurakit-test-log
+          path: aurakit-test.log
