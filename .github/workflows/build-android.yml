@@ -66,6 +66,8 @@ jobs:
       - name: Диагностика (аннотации + публикация лога)
         if: always()
         run: |
+          # Шаг вспомогательный: git-ошибки не должны ронять job.
+          set +e
           # Ошибки компиляции — в аннотации прогона.
           LOG=""
           for f in android/app/build.log android/build.log build.log; do

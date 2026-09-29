@@ -109,6 +109,8 @@ jobs:
       - name: Диагностика (аннотации + публикация лога)
         if: always()
         run: |
+          # Шаг вспомогательный: git-ошибки не должны ронять job.
+          set +e
           if [ -f aurakit-test.log ]; then
             grep -E "^e: |error:|FAILED" aurakit-test.log | tail -20 | while IFS= read -r line; do
               printf '::error title=aurakit::%s\n' "$(printf '%s' "$line" | tr -d '\r' | cut -c1-400)"
