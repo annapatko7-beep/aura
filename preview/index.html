@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Aura — дизайн-превью Qt-клиента</title>
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+
+<div class="backdrop" aria-hidden="true">
+  <div class="blob blob-a"></div>
+  <div class="blob blob-b"></div>
+</div>
+
+<div class="stage">
+
+  <aside class="rail glass">
+    <div class="rail-brand">
+      <div class="logo"><span></span></div>
+      <div>
+        <div class="rail-title">Aura</div>
+        <div class="rail-sub">AI agent network</div>
+      </div>
+    </div>
+    <nav class="rail-nav">
+      <button class="rail-btn" data-screen="login">Вход</button>
+      <button class="rail-btn" data-screen="register">Регистрация</button>
+      <button class="rail-btn is-active" data-screen="home">Home</button>
+      <button class="rail-btn" data-screen="chat">My Aura</button>
+      <button class="rail-btn" data-screen="negotiation">Negotiations</button>
+      <button class="rail-btn" data-screen="tasks">Tasks</button>
+      <button class="rail-btn" data-screen="contacts">Contacts</button>
+      <button class="rail-btn" data-screen="settings">Settings</button>
+      <button class="rail-btn" data-screen="kit">Компоненты</button>
+    </nav>
+    <div class="rail-note">
+      Токены идентичны QML-клиенту
+      (<code>client/qml/theme/AuraTheme.qml</code>).
+      «Спросить Ауру» шлёт настоящий запрос в AI-сервис.
+    </div>
+  </aside>
+
+  <main class="screen-area">
+
+    <!-- ================= LOGIN ================= -->
+    <section class="screen" id="screen-login">
+      <div class="glass panel narrow center">
+        <div class="logo logo--lg"><span></span></div>
+        <h1 class="hero">Welcome to Aura</h1>
+        <p class="muted center">Your personal AI agent network</p>
+        <label class="field" style="text-align:left"><span class="field-label">Email</span>
+          <input type="email" placeholder="Enter your email" value="anna@example.com" /></label>
+        <label class="field" style="text-align:left"><span class="field-label">Пароль</span>
+          <input type="password" placeholder="••••••••" value="aura1234" /></label>
+        <button class="btn btn--accent" style="width:100%" id="login-btn">Sign in</button>
+        <button class="btn" style="width:100%;margin-top:10px"><span class="glyph">G</span> Continue with Google</button>
+        <div class="hint">Forgot password? · Create account</div>
+      </div>
+    </section>
+
+    <!-- ================= REGISTER ================= -->
+    <section class="screen" id="screen-register">
+      <div class="glass panel narrow">
+        <div class="row"><div class="logo"><span></span></div><div class="title">Aura</div></div>
+        <h1 class="title--lg" style="margin:14px 0 4px">Create your Aura</h1>
+        <label class="field"><span class="field-label">Full Name</span><input placeholder="Enter your full name" /></label>
+        <label class="field"><span class="field-label">Email</span><input placeholder="Enter your email address" /></label>
+        <label class="field"><span class="field-label">Password</span><input type="password" placeholder="Enter your password" /></label>
+        <label class="field"><span class="field-label">Timezone</span><input value="UTC +3:00" /></label>
+        <label class="field"><span class="field-label">What should your Aura help you with?</span>
+          <input placeholder="e.g., coding, productivity, etc." /></label>
+        <button class="btn btn--accent" style="width:100%">Create account</button>
+        <div class="hint center">Terms · Privacy · Already have an account?</div>
+      </div>
+    </section>
+
+    <!-- ================= HOME ================= -->
+    <section class="screen is-active" id="screen-home">
+      <div class="row spread">
+        <div class="title--lg">Good evening, Alex</div>
+        <div class="muted--sm">All systems operational</div>
+      </div>
+
+      <div class="glass panel panel--glow">
+        <div class="title">Your Aura is active</div>
+        <div class="muted small">3 tasks completed today</div>
+      </div>
+
+      <div class="glass panel row">
+        <input class="field-inline grow" id="home-input" placeholder="What would you like to do?"
+               value="Хочу встретиться с Аней в эти выходные, чтобы обсудить стартап" />
+        <button class="btn btn--icon" title="голос">🎙</button>
+        <button class="btn btn--accent btn--icon" id="home-ask">➤</button>
+      </div>
+
+      <div class="row wrap">
+        <button class="btn btn--sm">Plan a meeting</button>
+        <button class="btn btn--sm">Check my schedule</button>
+        <button class="btn btn--sm">Send an email</button>
+        <button class="btn btn--sm">Create a reminder</button>
+      </div>
+
+      <div class="glass panel grow">
+        <div class="title small">Upcoming tasks</div>
+        <div class="list">
+          <div class="list-row"><div class="task-dot p"></div><div class="grow">Prepare presentation for Q3 review</div></div>
+          <div class="list-row"><div class="task-dot w"></div><div class="grow">Follow up on client proposal</div></div>
+          <div class="list-row"><div class="task-dot g"></div><div class="grow">Review marketing campaign metrics</div></div>
+        </div>
+      </div>
+
+      <div class="glass panel">
+        <div class="title small">Recent AI activity</div>
+        <div class="memory"><i></i>18:27 Aura initiated task: Draft Q3 marketing report</div>
+        <div class="memory"><i class="alt"></i>18:25 Aura sent reminder: Team meeting at 9 AM</div>
+        <div class="memory"><i></i>18:16 Aura scheduled meeting: Client call at 10 AM</div>
+      </div>
+    </section>
+
+    <!-- ================= AGENT CHAT ================= -->
+    <section class="screen" id="screen-chat">
+      <div class="glass panel row">
+        <div class="avatar avatar--agent">✦</div>
+        <div class="grow">
+          <div class="title">Aura</div>
+          <div class="muted--sm online">Online · Personal assistant</div>
+        </div>
+        <button class="btn btn--sm" data-goto="settings">View memory</button>
+      </div>
+
+      <div class="glass panel grow chat-scroll" id="chat-log">
+        <div class="bubble-wrap">
+          <div class="bubble">Хочу встретиться с Димой в эти выходные и обсудить стартап</div>
+          <div class="meta-line">Анна · 21:04</div>
+        </div>
+        <div class="bubble-wrap agent">
+          <div class="agent-badge"><i></i>Аура</div>
+          <div class="bubble">Я проверю ваши расписания и свяжусь с Аурой Димы. Бюджет до 1000 ₽?</div>
+          <div class="meta-line">Аура · 21:05</div>
+        </div>
+        <div class="row wrap">
+          <button class="chip is-on">Да, учитывать</button>
+          <button class="chip">Без ограничений</button>
+          <button class="chip">Изменить условия</button>
+        </div>
+      </div>
+
+      <div class="glass panel row">
+        <input class="field-inline grow" id="composer" placeholder="Type something…" />
+        <button class="btn btn--icon" title="голос">🎙</button>
+        <button class="btn btn--icon" title="вложение">⎘</button>
+        <button class="btn btn--accent btn--icon" id="send-btn">➤</button>
+      </div>
+
+      <div class="glass panel panel--glow">
+        <div class="row">
+          <div class="agent-dot">✦</div>
+          <input class="field-inline grow" id="agent-input"
+                 placeholder="Хочу встретиться с Аней в эти выходные, чтобы обсудить стартап" />
+          <button class="btn btn--accent" id="agent-btn">Спросить Ауру</button>
+        </div>
+        <div class="hint" id="agent-status">POST /v1/agent/run — ответ настоящий.</div>
+      </div>
+    </section>
+
+    <!-- ================= NEGOTIATION ================= -->
+    <section class="screen" id="screen-negotiation">
+      <div class="row spread">
+        <div class="title--lg">Meeting arrangement</div>
+        <div class="row"><span class="tag">In progress</span><span class="tag" id="neg-round">Round 2 of 5</span></div>
+      </div>
+
+      <div class="row">
+        <div class="glass panel grow center">
+          <div class="avatar avatar--lg" style="margin:0 auto">АН</div>
+          <div class="title" style="margin-top:8px">Анна</div>
+          <div class="muted--sm">Анна's Aura</div>
+        </div>
+        <div class="agent-dot" style="width:44px;height:44px;font-size:18px">✦</div>
+        <div class="glass panel grow center">
+          <div class="avatar avatar--lg avatar--agent" style="margin:0 auto">АН</div>
+          <div class="title" style="margin-top:8px">Аня</div>
+          <div class="muted--sm">Аня's Aura</div>
+        </div>
+      </div>
+
+      <div class="glass panel grow">
+        <div class="title small">Negotiation timeline</div>
+        <div class="timeline" id="neg-timeline">
+          <div class="tl-item"><div class="tl-dot is-done">1</div><div class="tl-card">Аура Анны предложила субботу 14:00</div></div>
+          <div class="tl-item"><div class="tl-dot is-done">2</div><div class="tl-card">Аура Ани проверила календарь</div></div>
+          <div class="tl-item"><div class="tl-dot is-done">3</div><div class="tl-card">Аура Ани предложила кофейню без глютена</div></div>
+          <div class="tl-item"><div class="tl-dot">4</div><div class="tl-card">Ожидание подтверждения…</div></div>
+        </div>
+      </div>
+
+      <div class="glass panel panel--glow">
+        <div class="row wrap">
+          <div class="grow">
+            <div class="title--lg" id="neg-result">Saturday, 14:00 — Кофе на полпути</div>
+            <div class="muted small" id="neg-meta">Two people · Estimated cost: 900 ₽</div>
+          </div>
+          <button class="btn btn--accent">Approve and book</button>
+          <button class="btn">Stop negotiation</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= TASKS ================= -->
+    <section class="screen" id="screen-tasks">
+      <div class="row spread"><div class="title--lg">Tasks</div><span class="tag">Week</span></div>
+      <div class="row">
+        <button class="btn btn--sm">‹</button>
+        <div class="title small">Aug 18 – Sat</div>
+        <button class="btn btn--sm">›</button>
+        <div class="grow"></div>
+        <div class="muted--sm">Mon 17 · Tue 18 · Wed 19 · Thu 20 · Fri 21 · Sat 22 · Sun 23</div>
+      </div>
+      <div class="glass panel grow">
+        <div class="title small">Today</div>
+        <div class="list">
+          <div class="list-row"><div class="task-dot p"></div><div class="grow">Meet Dima at Green Point</div></div>
+          <div class="list-row"><div class="task-dot g"></div><div class="grow">Prepare startup presentation</div></div>
+          <div class="list-row"><div class="task-dot w"></div><div class="grow">Reply to investor email</div></div>
+        </div>
+        <div class="title small" style="margin-top:14px">Upcoming</div>
+        <div class="list">
+          <div class="list-row"><div class="task-dot p"></div><div class="grow">Send out invitations for investor demo day</div></div>
+        </div>
+      </div>
+      <div class="glass panel">
+        <div class="title small">Aura suggestions</div>
+        <div class="muted small">You have 45 minutes free before your meeting</div>
+        <div class="progress" style="margin-top:10px"><i></i></div>
+        <div class="muted--xs" style="margin-top:6px">Time until next event</div>
+      </div>
+    </section>
+
+    <!-- ================= CONTACTS ================= -->
+    <section class="screen" id="screen-contacts">
+      <div class="title--lg">Contacts</div>
+      <div class="muted">Search people or Aura agents</div>
+      <input class="field-inline" placeholder="Поиск…" />
+      <div class="row"><button class="chip is-on">All</button><button class="chip">Favorites</button><button class="chip">Recent</button></div>
+      <div class="row grow">
+        <div class="glass panel grow">
+          <div class="list">
+            <button class="list-row"><div class="avatar avatar--agent">AM</div><div class="grow">Alex Morgan</div><span class="muted--sm">Aura active</span><div class="task-dot p"></div></button>
+            <button class="list-row"><div class="avatar">DV</div><div class="grow">Dima Volkov</div><span class="muted--sm">Available</span><div class="task-dot g"></div></button>
+            <button class="list-row"><div class="avatar is-away">MC</div><div class="grow">Maria Chen</div><span class="muted--sm">Away</span><div class="task-dot w"></div></button>
+          </div>
+          <button class="btn" style="margin-top:14px">Invite to Aura</button>
+        </div>
+        <div class="glass panel grow center">
+          <div class="avatar avatar--lg avatar--agent" style="margin:0 auto">AM</div>
+          <div class="title" style="margin-top:8px">Alex Morgan</div>
+          <div class="muted--sm">Aura available</div>
+          <div class="label">Shared meetings</div>
+          <div class="muted--sm">AI Strategy Workshop · Product Design Sprint</div>
+          <div class="label">Permissions</div>
+          <div class="muted--sm">Edit documents · Manage tasks · View analytics</div>
+          <button class="btn btn--accent" style="margin-top:14px;width:100%">Start negotiation</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section class="screen" id="screen-settings">
+      <div class="row spread"><div class="title--lg">Settings</div><button class="btn btn--icon btn--sm">+</button></div>
+      <div class="glass panel row">
+        <div class="avatar avatar--lg">АН</div>
+        <div class="grow"><div class="title">Анна</div><div class="muted--sm">anna@example.com</div></div>
+        <button class="btn btn--danger"><span class="glyph">⎋</span> Выйти</button>
+      </div>
+
+      <div class="glass panel">
+        <div class="center">
+          <div class="title">Your Aura always asks before performing sensitive actions</div>
+          <div class="row" style="justify-content:center;margin-top:14px">
+            <button class="btn btn--sm">Export my data</button>
+            <button class="btn btn--sm btn--danger">Delete account</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass panel">
+        <div class="title small">Permissions</div>
+        <div class="row wrap">
+          <div class="glass glass--sm panel grow">
+            <div class="title small">Calendar</div><div class="muted--sm">Allowed</div>
+            <div class="muted--xs" style="margin-top:6px">Aura can create events and add them to your calendar</div>
+            <div class="switch is-on" style="margin-top:10px"></div>
+          </div>
+          <div class="glass glass--sm panel grow">
+            <div class="title small">Email</div><div class="muted--sm">Approval required</div>
+            <div class="muted--xs" style="margin-top:6px">Aura can send emails from your calendar</div>
+            <div class="switch" style="margin-top:10px"></div>
+          </div>
+          <div class="glass glass--sm panel grow">
+            <div class="title small">Booking</div><div class="muted--sm">Allowed up to 1000 ₽</div>
+            <div class="muted--xs" style="margin-top:6px">Aura cannot make appointments above the limit</div>
+            <div class="switch is-on" style="margin-top:10px"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass panel">
+        <div class="title small">Что знает ваша Аура</div>
+        <div class="row gap">
+          <label class="field grow"><span class="field-label">Город</span><input value="Керкраде" /></label>
+          <label class="field grow"><span class="field-label">Бюджет, €</span><input value="3" /></label>
+        </div>
+        <div class="label">Диета</div>
+        <div class="chips" data-group="diet">
+          <button class="chip is-on">vegan</button><button class="chip">vegetarian</button>
+          <button class="chip">gluten_free</button><button class="chip">halal</button>
+        </div>
+        <button class="btn btn--accent"><span class="glyph">✓</span> Сохранить</button>
+      </div>
+    </section>
+
+    <!-- ================= KIT ================= -->
+    <section class="screen" id="screen-kit">
+      <div class="glass panel">
+        <div class="title small">Кнопки — пузыри</div>
+        <div class="row wrap">
+          <button class="btn">Glass</button>
+          <button class="btn btn--accent">Accent</button>
+          <button class="btn btn--quiet">Quiet</button>
+          <button class="btn btn--danger">Danger</button>
+          <button class="btn is-busy"><span class="glyph">✦</span> Busy</button>
+          <button class="btn" disabled>Disabled</button>
+        </div>
+      </div>
+      <div class="glass panel">
+        <div class="title small">Пузыри сообщений</div>
+        <div class="bubble-wrap"><div class="bubble">Чужое сообщение</div></div>
+        <div class="bubble-wrap mine"><div class="bubble">Своё сообщение</div></div>
+        <div class="bubble-wrap agent"><div class="agent-badge"><i></i>Аура</div><div class="bubble">Сообщение агента</div></div>
+      </div>
+      <div class="glass panel">
+        <div class="title small">Палитра</div>
+        <div class="swatches">
+          <div><span style="background:#0d0d0f"></span>bg-deep</div>
+          <div><span style="background:#16161a"></span>bg-base</div>
+          <div><span style="background:#1e1e24"></span>bg-surface</div>
+          <div><span style="background:#26262e"></span>bg-elevated</div>
+          <div><span style="background:#7c6aff"></span>accent</div>
+          <div><span style="background:#a78bfa"></span>accent-soft</div>
+          <div><span style="background:#f0f0f4"></span>text-primary</div>
+          <div><span style="background:#9a9aa4"></span>text-secondary</div>
+          <div><span style="background:#4ade80"></span>success</div>
+          <div><span style="background:#fbbf24"></span>warning</div>
+          <div><span style="background:#f87171"></span>danger</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

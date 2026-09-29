@@ -1,0 +1,69 @@
+/* ==========================================================================
+   aura_theme.qss — Dark Glassmorphism для варианта Qt Widgets.
+
+   Эталон дизайн-системы (v2). Для Qt Quick/QML используйте
+   client/qml/theme/AuraTheme.qml, для веб-превью — preview/styles.css:
+   значения совпадают один в один.
+
+   Примечание: backdrop-filter в Qt Widgets нет. Варианты: Qt Quick (QML) +
+   ShaderEffect, QWebEngineView, либо имитация через полупрозрачный QPixmap +
+   QGraphicsBlurEffect. Ниже — непрозрачная «стеклянная» имитация.
+   ========================================================================== */
+
+QMainWindow, QWidget#Root {
+    background: qradialgradient(cx:0.3, cy:0.2, radius:1,
+        stop:0 #1a1a2e, stop:1 #0d0d0f);
+}
+
+QFrame.GlassCard {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 22px;
+}
+QFrame.GlassCard:hover {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+}
+
+QPushButton.BubbleBtn {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 22px;
+    padding: 12px 24px;
+    color: #f0f0f4;
+    font-size: 14px;
+}
+QPushButton.BubbleBtn:hover {
+    background: rgba(255,255,255,0.10);
+    border-color: rgba(255,255,255,0.18);
+}
+QPushButton.BubbleBtn:pressed {
+    background: rgba(255,255,255,0.14);
+}
+
+QPushButton.AccentBtn {
+    background: #7c6aff;
+    border: none;
+    border-radius: 22px;
+    padding: 14px 28px;
+    color: #fff;
+    font-weight: 600;
+}
+QPushButton.AccentBtn:hover { background: #8b7aff; }
+
+QLineEdit, QComboBox, QTextEdit {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 10px 14px;
+    color: #f0f0f4;
+    selection-background-color: rgba(124,106,255,0.4);
+}
+QLineEdit:focus, QTextEdit:focus {
+    border: 1px solid #7c6aff;
+    background: rgba(255,255,255,0.12);
+}
+
+QLabel { color: #f0f0f4; }
+QLabel[role="secondary"] { color: #9a9aa4; }
+QLabel[role="tertiary"] { color: #5c5c66; }

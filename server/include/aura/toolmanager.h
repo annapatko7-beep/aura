@@ -1,0 +1,67 @@
+// aura/toolmanager.h — выполнение действий Ауры через API.
+//
+// Инструменты повторяют контракт Python tools.py, чтобы действие можно было
+// выполнить и на C++-сервере (основной режим), и на стороне AI-сервиса.
+// В режиме sandbox (по умолчанию) внешние вызовы заменяются детерминированными
+// ответами — удобно для разработки без сторонних ключей.
+#pragma once
+
+#include <string>
+
+#include "aura/chatmanager.h"
+#include "aura/config.h"
+#include "aura/databasemanager.h"
+#include "aura/json.h"
+
+namespace aura {
+
+class IntegrationManager;  // интеграции (этап 9): Gmail/Google Calendar
+
+class ToolManager {
+public:
+    struct Result {
+        bool ok = false;
+        Json data = Json::object();
+        std::string error;
+    };
+
+    // integrations может быть nullptr (тесты/режим без интеграций) — тогда
+    // send_email/check_calendar работают через прежние пути (email API/память).
+    ToolManager(const Config& config, DatabaseManager& database, ChatManager& chats,
+                IntegrationManager* integrations = nullptr);
+
+    Json list() const;
+    Result run(long long userId, const std::string& tool, const Json& args);
+
+    // Классификация опасности (этап 8, ядро безопасности). Опасные инструменты
+    // имеют внешние побочные эффекты и по умолчанию требуют подтверждения.
+    //   allow — исполнять сразу; ask — ждать подтверждения; deny — не исполнять.
+    static bool isDangerous(const std::string& tool);
+    static std::string defaultMode(const std::string& tool);  // "ask" | "allow"
+    static bool isKnownTool(const std::string& tool);
+
+    // Отдельные инструменты (открыты для тестов).
+    Result sendMessage(long long userId, const Json& args);
+    Result createNote(long long userId, const Json& args);
+    Result createReminder(long long userId, const Json& args);
+    Result sendEmail(long long userId, const Json& args);
+    Result findCafe(long long userId, const Json& args);
+    Result bookTable(long long userId, const Json& args);
+    Result checkCalendar(long long userId, const Json& args);
+    Result suggestTime(long long userId, const Json& args);
+
+    std::size_t executed() const { return executed_; }
+
+private:
+    Result httpTool(const std::string& endpoint,
+                    const Json& payload,
+                    const Json& sandboxFallback) const;
+
+    const Config& config_;
+    DatabaseManager& database_;
+    ChatManager& chats_;
+    IntegrationManager* integrations_ = nullptr;
+    mutable std::size_t executed_ = 0;
+};
+
+}  // namespace aura

@@ -1,0 +1,30 @@
+{
+  "__comment": "Шаблон конфигурации Firebase. Скопируйте в app/google-services.json и замените значения данными вашего проекта из консоли Firebase (Настройки проекта → Ваши приложения → Android, пакет ai.aura.app). Без этого файла FCM не инициализируется — приложение честно показывает «Push не настроен» в настройках, остальные функции работают.",
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "aura-example",
+    "storage_bucket": "aura-example.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000",
+        "android_client_info": {
+          "package_name": "ai.aura.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "REPLACE_WITH_FIREBASE_ANDROID_API_KEY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

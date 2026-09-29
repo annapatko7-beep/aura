@@ -1,0 +1,4 @@
+libargon2 — reference implementation of Argon2 (PHC winner).
+Vendored from argon2-cffi-bindings 26.1.0 (extras/libargon2).
+Upstream: https://github.com/P-H-C/phc-winner-argon2
+License: dual CC0 (public domain) / Apache License 2.0.

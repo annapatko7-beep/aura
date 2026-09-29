@@ -1,0 +1,12 @@
+# Артефакты сборки Android (этап 11).
+*.iml
+.gradle/
+local.properties
+.idea/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+# Секреты Firebase: файл выдаёт консоль Firebase, в репозиторий он не попадает.
+# Шаблон — app/google-services.json.example.
+app/google-services.json

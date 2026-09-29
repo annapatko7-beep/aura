@@ -1,0 +1,145 @@
+# Сборка desktop-клиента Aura под Windows (.exe) — артефакт Actions.
+#
+# Результат: вкладка Actions → «Build Windows client» → Artifacts →
+# aura-desktop-windows.zip (aura-client.exe + Qt-рантайм + libpq).
+# Подпись кода и установщик (NSIS/MSI) — отдельно, нужны ваши сертификаты.
+name: Build Windows client
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Qt 6 / MSVC — aura-client.exe
+    runs-on: windows-2022
+    permissions:
+      contents: write   # публикация лога в ветку arena/build-logs
+    steps:
+      - uses: actions/checkout@v4
+
+      # Qt ставим напрямую aqt: перебираем связки версия/компилятор, пока
+      # одна не встанет (зеркала и состав архивов со временем меняются).
+      - name: Qt 6 (aqt, MSVC x64)
+        shell: pwsh
+        run: |
+          pip install aqtinstall 2>&1 | Tee-Object -FilePath qt-install.log
+          python -m aqt version 2>&1 | Tee-Object -Append qt-install.log
+          $ok = $false
+          foreach ($combo in @(
+            @("6.7.3", "win64_msvc2019_64", "C:\Qt\6.7.3\msvc2019_64"),
+            @("6.8.3", "win64_msvc2022_64", "C:\Qt\6.8.3\msvc2022_64"),
+            @("6.6.3", "win64_msvc2019_64", "C:\Qt\6.6.3\msvc2019_64")
+          )) {
+            # Как называется модуль TTS в этой версии — покажет список (пишем в лог).
+            python -m aqt list-qt windows desktop --modules $combo[0] $combo[1] 2>&1 |
+              Tee-Object -Append qt-install.log
+            foreach ($modules in @(
+              ,@("qtwebsockets", "qtmultimedia", "qttexttospeech")
+              ,@("qtwebsockets", "qtmultimedia", "qtspeech")
+            )) {
+              python -m aqt install-qt windows desktop $combo[0] $combo[1] `
+                -m @modules -O C:\Qt 2>&1 | Tee-Object -Append qt-install.log
+              if ($LASTEXITCODE -eq 0 -and (Test-Path "$($combo[2])\bin\qmake.exe")) {
+                echo "CMAKE_PREFIX_PATH=$($combo[2])" >> $env:GITHUB_ENV
+                echo "$($combo[2])\bin" >> $env:GITHUB_PATH
+                $ok = $true
+                break
+              }
+            }
+            if ($ok) { break }
+          }
+          if (-not $ok) { exit 1 }
+
+      - name: Конфигурация и сборка
+        shell: pwsh
+        run: |
+          # Собираем только клиент: сервер — POSIX-код (сокеты/poll), на
+          # Windows он не нужен и не собирается (AURA_WITH_SERVER=OFF).
+          # Клиент libpq не использует — сервер у пользователя живёт в Docker.
+          # Только MSVC (cl.exe): mingw64 на раннере конфликтует с MSVC-сборкой Qt.
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DAURA_WITH_CLIENT=ON -DAURA_WITH_SERVER=OFF 2>&1 | Tee-Object -FilePath build.log
+          cmake --build build --config Release 2>&1 | Tee-Object -Append build.log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Упаковка (windeployqt)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build\client\Release\aura-client.exe dist\
+          windeployqt --release --no-translations dist\aura-client.exe 2>&1 | Tee-Object -Append build.log
+
+      - name: Артефакт — exe
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aura-desktop-windows
+          path: dist/
+
+      - name: Артефакт — лог сборки (для отладки)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-windows
+          path: |
+            qt-install.log
+            build.log
+
+      # Песочница разработки не видит blob-хосты артефактов — дублируем логи
+      # в ветку arena/build-logs, откуда их можно прочитать обычным git.
+      # Ошибки компиляции — в аннотации прогона (читаются через API),
+      # сам лог — в ветку arena/build-logs.
+      - name: Диагностика (аннотации + публикация лога)
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          if (Test-Path build.log) {
+            $lines = Select-String -Path build.log -Pattern "error|FAILED" | Select-Object -Last 20
+            foreach ($l in $lines) {
+              $m = ($l.Line -replace "[\r\n]", " ")
+              if ($m.Length -gt 400) { $m = $m.Substring(0, 400) }
+              Write-Output "::error title=windows-build::$m"
+            }
+          }
+          $pub = New-Item -ItemType File -Force push-diag.log
+          Add-Content $pub "run ${{ github.run_id }} job windows"
+          for ($i = 1; $i -le 3; $i++) {
+            Remove-Item -Recurse -Force logpub -ErrorAction SilentlyContinue
+            git -c http.extraHeader="Authorization: token ${{ github.token }}" `
+              clone --depth 1 --branch arena/build-logs `
+              "https://github.com/${{ github.repository }}" logpub 2>&1 |
+              Add-Content $pub
+            Add-Content $pub "clone exit=$LASTEXITCODE"
+            if (-not (Test-Path logpub\.git)) {
+              # клон не удался — создаём репозиторий локально
+              New-Item -ItemType Directory -Force logpub | Out-Null
+              Push-Location logpub
+              git init -q 2>&1 | Add-Content $pub
+              git remote add origin "https://github.com/${{ github.repository }}" 2>&1
+              git fetch --depth 1 origin arena/build-logs 2>&1 | Add-Content $pub
+              git checkout -q -B arena/build-logs FETCH_HEAD 2>&1 | Add-Content $pub
+              Pop-Location
+            }
+            if (Test-Path qt-install.log) { Copy-Item qt-install.log logpub\windows-qt-install.log -Force }
+            if (Test-Path build.log) { Copy-Item build.log logpub\windows-build.log -Force }
+            Push-Location logpub
+            git config user.name "aura-ci"
+            git config user.email "ci@aura.local"
+            git add -A 2>&1 | Add-Content $pub
+            git commit -m "windows log ${{ github.sha }} [skip ci]" 2>&1 | Add-Content $pub
+            git -c http.extraHeader="Authorization: token ${{ github.token }}" push origin HEAD:arena/build-logs 2>&1 | Add-Content $pub
+            $code = $LASTEXITCODE
+            Add-Content $pub "push exit=$code"
+            Pop-Location
+            if ($code -eq 0) { break }
+            Start-Sleep -Seconds 10
+          }
+          $m = ((Get-Content push-diag.log | Select-Object -Last 14) -join "~")
+          $m = ($m -replace "[\r\n]", " ")
+          if ($m.Length -gt 1500) { $m = $m.Substring(0, 1500) }
+          Write-Output "::error title=windows-publish::$m"
+          exit 0

@@ -1,0 +1,2 @@
+module Aura.Theme
+singleton AuraTheme 1.0 AuraTheme.qml
