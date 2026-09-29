@@ -54,7 +54,7 @@ class VoiceService(private val context: Context) {
             val text = payload.str("text")
             if (text.isBlank()) Result.Failure("пустая расшифровка") else Result.Text(text, onDevice = false)
         } catch (error: AuraError) {
-            Result.Failure(error.message)
+            Result.Failure(error.message ?: "ошибка расшифровки")
         } catch (error: Exception) {
             Result.Failure(error.message ?: "микрофон недоступен")
         }
@@ -86,13 +86,14 @@ class VoiceService(private val context: Context) {
                 override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
                 override fun onError(error: Int) {
-                    if (continuation.isActive) continuation.resumeWith(Result.success(null))
+                    // kotlin.Result — не наш sealed Result из этого файла.
+                    if (continuation.isActive) continuation.resumeWith(kotlin.Result.success(null))
                 }
 
                 override fun onResults(results: Bundle?) {
                     val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
-                    if (continuation.isActive) continuation.resumeWith(Result.success(text))
+                    if (continuation.isActive) continuation.resumeWith(kotlin.Result.success(text))
                 }
             })
             continuation.invokeOnCancellation { speech.destroy() }

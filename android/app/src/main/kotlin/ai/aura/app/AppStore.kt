@@ -605,7 +605,11 @@ object AppStore {
 
     fun handleDeepLink(url: String) {
         when (val link = DeepLink.parse(url)) {
-            is DeepLink.Chats -> if (link.id != null) openChat(link.id) else _tab.value = Tab.CHATS
+            is DeepLink.Chats -> {
+                // Локальная копия: id объявлен в другом модуле, smart cast невозможен.
+                val chatId = link.id
+                if (chatId != null) openChat(chatId) else _tab.value = Tab.CHATS
+            }
             DeepLink.Voice -> _wantVoice.value = true
             is DeepLink.Ask -> if (link.text.isBlank()) _wantVoice.value = true else ask(link.text)
             DeepLink.Tasks -> _tab.value = Tab.TASKS
@@ -634,14 +638,14 @@ object AppStore {
 
     private fun describe(error: AuraError): String = when (error.code) {
         "unauthorized" -> "Неверный email или пароль"
-        "forbidden" -> error.message
+        "forbidden" -> error.message ?: "доступ запрещён"
         "requires_2fa" -> "Нужен код двухфакторной аутентификации"
         "email_not_verified" -> "Email не подтверждён"
         "conflict" -> "Такой email уже зарегистрирован"
         "not_found" -> "Не найдено"
         "disconnected" -> "Нет соединения с сервером"
         "upstream_error" -> "AI-сервис недоступен, попробуйте позже"
-        else -> error.message
+        else -> error.message ?: "ошибка (${error.code})"
     }
 
     fun clearError() { _errorText.value = null }
@@ -649,12 +653,13 @@ object AppStore {
     /** Task<T> → suspend без лишней зависимости (play-services не нужен). */
     private suspend fun <T> awaitTask(task: com.google.android.gms.tasks.Task<T>): T =
         suspendCancellableCoroutine { continuation ->
-            task.addOnSuccessListener { value -> continuation.resumeWith(Result.success(value)) }
+            // kotlin.Result — наш sealed Result в этом файле его затеняет.
+            task.addOnSuccessListener { value -> continuation.resumeWith(kotlin.Result.success(value)) }
             task.addOnCanceledListener {
                 continuation.resumeWith(
-                    Result.failure(AuraError("canceled", "операция отменена")),
+                    kotlin.Result.failure(AuraError("canceled", "операция отменена")),
                 )
             }
-            task.addOnFailureListener { error -> continuation.resumeWith(Result.failure(error)) }
+            task.addOnFailureListener { error -> continuation.resumeWith(kotlin.Result.failure(error)) }
         }
 }
