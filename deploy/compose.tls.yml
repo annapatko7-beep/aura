@@ -1,0 +1,45 @@
+# TLS для Selfvoy: Caddy сам получает сертификат Let's Encrypt для SELFVOY_DOMAIN и
+# проксирует wss://SELFVOY_DOMAIN → server:9000 (WebSocket проходит как есть).
+#
+#   docker compose -f docker-compose.yml -f deploy/compose.tls.yml up -d
+#
+# Нужно: A-запись домена → IP сервера, открытые порты 80 и 443.
+# deploy/install.sh подключает этот файл сам, если задан SELFVOY_DOMAIN.
+services:
+  server:
+    environment:
+      # Адрес клиента — из X-Forwarded-For только от Caddy (фиксированный IP в сети edge).
+      SELFVOY_TRUSTED_PROXIES: 172.30.0.10
+      # Лимит соединений проверяется до рукопожатия — по адресу прокси.
+      SELFVOY_MAX_CONNECTIONS_PER_IP: "0"
+    networks:
+      - default
+      - edge
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      SELFVOY_DOMAIN: ${SELFVOY_DOMAIN:?SELFVOY_DOMAIN is required for TLS}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      edge:
+        ipv4_address: 172.30.0.10
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  caddy_data:
+  caddy_config:

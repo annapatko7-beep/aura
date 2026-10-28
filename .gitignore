@@ -1,0 +1,50 @@
+# Сборка
+build/
+out/
+dist/
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+selfvoy-server
+selfvoy-tests
+selfvoy-client
+
+# Локальные данные и окружение
+.selfvoy-data.json
+.selfvoy_memory.json
+# те же данные под именами до переименования продукта
+.aura-data.json
+.aura_memory.json
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Qt
+CMakeLists.txt.user
+*.pro.user
+.qmlcache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Android / iOS Release Secrets & Keystores
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+GoogleService-Info.plist
+backups/
+release/
+
+# Рабочие копии агентов Claude Code (git worktree)
+.claude/worktrees/

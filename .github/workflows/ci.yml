@@ -1,0 +1,187 @@
+# CI Selfvoy: C++-ядро (сборка + unit), Python AI Service, сверка протокола
+# iOS/Android, JVM-тесты SelfvoyKit (Android). Qt-клиент и iOS здесь не
+# собираются (нужны Qt 6 / macOS), APK — нужен Android SDK (Android Studio);
+# локальные проверки: qmlcachegen и tools/check_*_protocol.py (docs/TESTING.md).
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# По умолчанию токен только читает. Запись (лог в arena/build-logs) — только в
+# отдельном job'е публикации, где не исполняется код из репозитория.
+permissions:
+  contents: read
+
+jobs:
+  cpp:
+    name: C++ сервер — сборка и тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build libpq-dev libssl-dev
+
+      - name: Конфигурация
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DSELFVOY_WITH_LIBPQ=ON -DSELFVOY_WITH_CLIENT=OFF -DSELFVOY_BUILD_TESTS=ON
+
+      - name: Сборка
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Unit-тесты
+        # add_test объявлен в server/CMakeLists — тесты живут в build/server.
+        run: ctest --test-dir build/server --output-on-failure
+
+  python:
+    name: Python AI Service — тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Зависимости
+        run: pip install -r ai/requirements.txt
+
+      - name: Тесты
+        run: cd ai && PYTHONPATH=. python -m pytest -q
+
+  protocol:
+    name: Протокол iOS/Android ↔ сервер и синтаксис e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Сверка типов сообщений iOS с хендлерами сервера
+        run: python3 tools/check_ios_protocol.py
+
+      - name: Сверка типов сообщений Android с хендлерами сервера
+        run: python3 tools/check_android_protocol.py
+
+      - name: Синтаксис e2e-прогона
+        run: python3 -m py_compile tools/e2e.py
+
+  android:
+    name: Android — JVM-тесты SelfvoyKit (протокол без SDK)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Модуль :selfvoykit — чистый Kotlin/JVM (протокол, deep links), поэтому
+      # его тесты идут в CI без Android SDK. Gradle нужен только чтобы
+      # сгенерировать wrapper нужной версии (в репозитории wrapper не лежит).
+      - name: Gradle wrapper
+        working-directory: android
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gradle
+          gradle wrapper --gradle-version 8.7
+
+      - name: Тесты SelfvoyKit
+        working-directory: android
+        run: |
+          ./gradlew :selfvoykit:test --no-daemon --stacktrace 2>&1 | tee ../selfvoykit-test.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Лог тестов SelfvoyKit (для отладки)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfvoykit-test-log
+          path: selfvoykit-test.log
+
+      - name: Ошибки в аннотации прогона
+        if: always()
+        run: |
+          if [ -f selfvoykit-test.log ]; then
+            grep -E "^e: |error:|FAILED" selfvoykit-test.log | tail -20 | while IFS= read -r line; do
+              printf '::error title=selfvoykit::%s\n' "$(printf '%s' "$line" | tr -d '\r' | cut -c1-400)"
+            done
+          fi
+          exit 0
+
+  # Дубль лога в ветку arena/build-logs (песочница не видит артефакты).
+  # Отдельный job: токен с правом записи не попадает туда, где исполняется
+  # код из репозитория (Gradle-сборка). Только push-события (не PR).
+  android-log:
+    name: Лог SelfvoyKit → arena/build-logs
+    needs: android
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Лог тестов SelfvoyKit
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: selfvoykit-test-log
+
+      - name: Публикация лога
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Шаг вспомогательный: git-ошибки не должны ронять job.
+          set +e
+          rm -f push-diag.log
+          echo "run ${{ github.run_id }} job selfvoykit" > push-diag.log
+          for i in 1 2 3; do
+            rm -rf logpub
+            {
+              git -c http.extraHeader="Authorization: token $GH_TOKEN" \
+                clone --depth 1 --branch arena/build-logs \
+                "https://github.com/${{ github.repository }}" logpub 2>&1
+              echo "clone exit=$?"
+            } >> push-diag.log
+            if [ ! -d logpub/.git ]; then
+              # клон не удался — создаём репозиторий локально
+              mkdir -p logpub
+              (
+                cd logpub
+                git init -q
+                git remote add origin "https://github.com/${{ github.repository }}"
+                git -c http.extraHeader="Authorization: token $GH_TOKEN" fetch --depth 1 origin arena/build-logs
+                git checkout -q -B arena/build-logs FETCH_HEAD
+              ) >> push-diag.log 2>&1
+            fi
+            [ -f selfvoykit-test.log ] && cp selfvoykit-test.log logpub/selfvoykit-test.log
+            (
+              cd logpub
+              git config user.name "selfvoy-ci"
+              git config user.email "ci@selfvoy.local"
+              git add -A 2>&1
+              git commit -m "selfvoykit log ${{ github.sha }} [skip ci]" 2>&1
+              git -c http.extraHeader="Authorization: token $GH_TOKEN" push origin HEAD:arena/build-logs 2>&1
+            ) >> push-diag.log 2>&1 && echo "push ok" >> push-diag.log && break
+            sleep 10
+          done
+          printf '::error title=selfvoykit-publish::%s\n' "$(tail -14 push-diag.log | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
+          exit 0

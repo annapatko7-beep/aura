@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Selfvoy</string>
+    <string name="title_activity_main">Selfvoy</string>
+    <string name="package_name">app.selfvoy.network</string>
+    <string name="custom_url_scheme">app.selfvoy.network</string>
+</resources>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Сетевая политика Selfvoy.
+
+  Продакшн-сервер — только wss:// (TLS). Открытый ws:// нужен для разработки и
+  домашнего сервера: эмулятор ходит на компьютер разработчика по 10.0.2.2, телефон —
+  по IP компьютера в той же Wi-Fi сети (ws://192.168.x.x:9000). Адрес в локальной
+  сети заранее неизвестен, поэтому открытый трафик разрешён в base-config;
+  доверие — только системным сертификатам (пользовательские CA не принимаются).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

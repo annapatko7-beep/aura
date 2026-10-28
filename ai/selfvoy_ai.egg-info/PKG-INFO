@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: selfvoy-ai
+Version: 0.1.0
+Summary: Python AI Service для сети ИИ-агентов Selfvoy
+Requires-Python: >=3.10
+Requires-Dist: fastapi>=0.143.0
+Requires-Dist: starlette>=1.6.0
+Requires-Dist: uvicorn[standard]>=0.53.0
+Requires-Dist: pydantic>=2.13.5
+Requires-Dist: httpx>=0.28.1
+Requires-Dist: python-multipart>=0.0.32
+Requires-Dist: cryptography>=42.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: sqlglot>=25.0; extra == "dev"
+Provides-Extra: postgres
+Requires-Dist: psycopg[binary]>=3.1; extra == "postgres"

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Selfvoy</string>
+
+    <!-- Шорткаты лаунчера (официальный механизм Android, без Accessibility) -->
+    <string name="shortcut_ask_short">Спросить Selfvoy</string>
+    <string name="shortcut_ask_long">Спросить Selfvoy</string>
+    <string name="shortcut_voice_short">Голосом</string>
+    <string name="shortcut_voice_long">Спросить Selfvoy голосом</string>
+    <string name="shortcut_task_short">Новая задача</string>
+    <string name="shortcut_task_long">Создать задачу</string>
+</resources>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Данные приложения не попадают ни в облачную копию, ни в перенос на новый
+  телефон (Android 12+): в localStorage WebView лежат токены входа, и копия
+  в Google Drive или на другом устройстве дала бы вход без пароля и 2FA.
+  На Android 11 и ниже то же делает android:allowBackup="false" в манифесте.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,19 @@
+# Нижние границы — версии, на которых проходят тесты (старые starlette и
+# python-multipart имеют известные уязвимости). Верхние границы не фиксируем.
+fastapi>=0.143.0
+# fastapi тянет starlette сам, но нижняя граница — явно (исправления безопасности).
+starlette>=1.6.0
+uvicorn[standard]>=0.53.0
+pydantic>=2.13.5
+httpx>=0.28.1
+# multipart/form-data для Whisper-совместимого /v1/speech/transcribe
+python-multipart>=0.0.32
+# опционально: реальная БД для автономного режима AI-сервиса
+# psycopg[binary]>=3.1
+# криптография для подписи и проверки конвертов Aura Federation Protocol (Ed25519)
+cryptography>=42.0.0
+# база часовых поясов (критично для корректного времени на Windows)
+tzdata>=2024.1
+# для тестов
+pytest>=8.0
+

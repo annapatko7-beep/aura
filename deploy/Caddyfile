@@ -1,0 +1,5 @@
+# Caddy для Selfvoy (deploy/compose.tls.yml): автоматический HTTPS и wss:// → server:9000.
+{$SELFVOY_DOMAIN} {
+	encode gzip
+	reverse_proxy server:9000
+}

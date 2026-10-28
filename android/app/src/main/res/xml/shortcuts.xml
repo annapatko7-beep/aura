@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Шорткаты лаунчера (долгое нажатие на иконке) — официальный механизм Android.
+  Каждый открывает приложение по deep link selfvoy:// — та же маршрутизация,
+  что и у Siri/Команд на iOS (docs/MOBILE_FEATURES.md).
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="ask"
+        android:enabled="true"
+        android:icon="@drawable/ic_selfvoy"
+        android:shortcutShortLabel="@string/shortcut_ask_short"
+        android:shortcutLongLabel="@string/shortcut_ask_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="app.selfvoy"
+            android:targetClass="app.selfvoy.MainActivity"
+            android:data="selfvoy://ask" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="voice"
+        android:enabled="true"
+        android:icon="@drawable/ic_selfvoy"
+        android:shortcutShortLabel="@string/shortcut_voice_short"
+        android:shortcutLongLabel="@string/shortcut_voice_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="app.selfvoy"
+            android:targetClass="app.selfvoy.MainActivity"
+            android:data="selfvoy://voice" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="task"
+        android:enabled="true"
+        android:icon="@drawable/ic_selfvoy"
+        android:shortcutShortLabel="@string/shortcut_task_short"
+        android:shortcutLongLabel="@string/shortcut_task_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="app.selfvoy"
+            android:targetClass="app.selfvoy.MainActivity"
+            android:data="selfvoy://tasks?new=1" />
+    </shortcut>
+</shortcuts>

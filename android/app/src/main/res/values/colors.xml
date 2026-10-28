@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Цвета окна до первого кадра Compose (светлая тема); тёмная — values-night. -->
+    <color name="selfvoy_bg_deep">#F2F2F7</color>
+    <color name="selfvoy_accent">#3555F5</color>
+</resources>

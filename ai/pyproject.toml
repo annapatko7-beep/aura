@@ -1,0 +1,29 @@
+[project]
+name = "selfvoy-ai"
+version = "0.1.0"
+description = "Python AI Service для сети ИИ-агентов Selfvoy"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.143.0",
+  "starlette>=1.6.0",
+  "uvicorn[standard]>=0.53.0",
+  "pydantic>=2.13.5",
+  "httpx>=0.28.1",
+  "python-multipart>=0.0.32",
+  "cryptography>=42.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "sqlglot>=25.0"]
+postgres = ["psycopg[binary]>=3.1"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["selfvoy_ai*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

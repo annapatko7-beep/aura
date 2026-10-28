@@ -1,0 +1,80 @@
+# Сборка iOS-клиента Selfvoy на macOS: проект из ios/project.yml (XcodeGen),
+# сборка под симулятор без подписи и смоук-тесты (SelfvoyTests + SelfvoyKit).
+#
+# Результат: вкладка Actions → «Build iOS» → Artifacts → selfvoy-ios-simulator
+# (Selfvoy.app для симулятора). Для TestFlight нужен Apple Developer Program,
+# сертификат и provisioning profile (см. docs/IOS.md).
+name: Build iOS
+
+on:
+  push:
+    branches: ["**"]
+    paths: ["ios/**", ".github/workflows/build-ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/build-ios.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Xcode — симулятор и тесты
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Свежий XcodeGen пишет проект в формате Xcode 16 — нужен Xcode 16+.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+
+      - name: XcodeGen
+        run: brew install xcodegen
+
+      - name: Проект Selfvoy.xcodeproj
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Тесты SelfvoyKit (Swift Package)
+        working-directory: ios/SelfvoyKit
+        run: swift test
+
+      - name: Сборка и смоук-тесты приложения
+        working-directory: ios
+        run: |
+          set -o pipefail
+          DEST=$(xcrun simctl list devices available -j \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          xcodebuild test \
+            -project Selfvoy.xcodeproj -scheme Selfvoy \
+            -destination "id=$DEST" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee ../xcodebuild.log
+
+      - name: Артефакт — Selfvoy.app (симулятор)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfvoy-ios-simulator
+          path: ios/build/Build/Products/Debug-iphonesimulator/Selfvoy.app
+
+      # Ошибки компилятора/тестов — в лог шага и аннотации прогона, чтобы их
+      # было видно без скачивания артефакта.
+      - name: Ошибки сборки
+        if: failure()
+        run: |
+          grep -nE "error:|: error|failed|Failing tests|XCTAssert" xcodebuild.log | grep -v "^.*builtin-" | head -80 || true
+          grep -E "^/.*error: " xcodebuild.log | sort -u | head -30 | while IFS= read -r l; do
+            f=${l%%:*}; rest=${l#*:}; line=${rest%%:*}
+            echo "::error file=${f#$GITHUB_WORKSPACE/},line=$line::${l##*error: }"
+          done || true
+
+      - name: Лог сборки
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfvoy-ios-build-log
+          path: xcodebuild.log

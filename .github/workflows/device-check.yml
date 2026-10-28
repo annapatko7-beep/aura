@@ -1,0 +1,211 @@
+# Проверка клиентов на настоящих платформах со скриншотами:
+#   Android — APK из builds/android на эмуляторе (API 34) + dev-стек с демо-данными;
+#   Windows — установщик из builds/windows: тихая установка, запуск, снимки;
+#   iOS     — сборка в Xcode, UI-тест SelfvoyUITests на симуляторе + dev-стек на macOS.
+# Снимки — в артефактах прогона и в ветках builds/shots-{android,windows,ios}
+# (ветки — только для main, отдельным job'ом публикации).
+# Пароль демо-аккаунтов генерируется на каждый прогон.
+name: Device check
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/device-check.yml"
+      - "tools/android_tour.py"
+      - "ios/SelfvoyUITests/**"
+
+# Проверки исполняют код из репозитория — токен только на чтение. Запись
+# (ветки builds/shots-*) — в отдельном job'е publish, который лишь скачивает
+# артефакты.
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android — эмулятор
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/checkout@v4
+        with: { ref: builds/android, path: apk, persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Сервер и AI-сервис
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ninja-build >/dev/null
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSELFVOY_WITH_LIBPQ=OFF -DSELFVOY_BUILD_TESTS=OFF
+          cmake --build build -j"$(nproc)"
+          python -m pip install -q -r ai/requirements.txt websockets
+          PYTHON=python bash tools/dev_stack.sh
+          echo "SELFVOY_DEMO_PASSWORD=Demo$(openssl rand -hex 8)7" >> "$GITHUB_ENV"
+      - name: Демо-данные
+        run: python tools/demo_seed.py
+      - name: KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Эмулятор и проход по экранам
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            adb install -r apk/Selfvoy-debug.apk
+            python tools/android_tour.py shots/android
+      - name: Логи стека
+        if: always()
+        run: |
+          mkdir -p shots/android
+          cp build/devstack/*.log shots/android/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: shots-android, path: shots/android }
+
+  windows:
+    name: Windows — установка и запуск
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: builds/windows, path: setup, persist-credentials: false }
+      - name: Тихая установка, запуск, снимки
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force shots | Out-Null
+          $log = "shots\check.log"
+          Start-Process setup\Selfvoy-Setup.exe -ArgumentList "/S" -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\Selfvoy\selfvoy-client.exe"
+          Add-Content $log "установлен: $(Test-Path $exe)"
+          Add-Content $log "ярлык на рабочем столе: $(Test-Path "$env:USERPROFILE\Desktop\Selfvoy.lnk")"
+          Add-Content $log "ярлык в Пуске: $(Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Selfvoy\Selfvoy.lnk")"
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          function Shot($name) {
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("shots\$name.png")
+          }
+          $p = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 12
+          Shot "01-start"
+          $p.Refresh()
+          Add-Content $log "процесс жив через 12 с: $(-not $p.HasExited)"
+          if (-not $p.HasExited) {
+            Add-Content $log "окно: '$($p.MainWindowTitle)'"
+            Add-Content $log "память: $([math]::Round($p.WorkingSet64 / 1MB)) МБ"
+            # Вход без сервера: должно появиться сообщение об ошибке соединения.
+            $shell = New-Object -ComObject WScript.Shell
+            $null = $shell.AppActivate($p.Id)
+            Start-Sleep -Seconds 1
+            [System.Windows.Forms.SendKeys]::SendWait("{TAB}")
+            Start-Sleep -Seconds 1
+            [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+            Start-Sleep -Seconds 4
+            Shot "02-login-attempt"
+            Stop-Process -Id $p.Id -Force
+          } else {
+            Add-Content $log "код выхода: $($p.ExitCode)"
+          }
+          Get-Content $log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: shots-windows, path: shots }
+
+  ios:
+    name: iOS — симулятор
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # Свежий XcodeGen пишет проект в формате Xcode 16 — нужен Xcode 16+.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+      - name: XcodeGen
+        run: brew install xcodegen >/dev/null
+      - name: Сервер и AI-сервис (macOS)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSELFVOY_WITH_LIBPQ=OFF -DSELFVOY_BUILD_TESTS=OFF
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+          python -m pip install -q -r ai/requirements.txt websockets
+          PYTHON=python bash tools/dev_stack.sh
+          echo "SELFVOY_DEMO_PASSWORD=Demo$(openssl rand -hex 8)7" >> "$GITHUB_ENV"
+      - name: Демо-данные
+        run: python tools/demo_seed.py
+      - name: Сборка и проход по экранам
+        working-directory: ios
+        run: |
+          set +e
+          xcodegen generate
+          DEST=$(xcrun simctl list devices available -j \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for k,v in d.items() if 'iOS' in k for x in v if x['name'].startswith('iPhone')))")
+          mkdir -p "$GITHUB_WORKSPACE/shots/ios"
+          TEST_RUNNER_SELFVOY_TOUR_EMAIL=alex@selfvoy.local \
+          TEST_RUNNER_SELFVOY_TOUR_PASSWORD="$SELFVOY_DEMO_PASSWORD" \
+          TEST_RUNNER_SELFVOY_TOUR_SHOTS="$GITHUB_WORKSPACE/shots/ios" \
+          xcodebuild test -project Selfvoy.xcodeproj -scheme Selfvoy -destination "id=$DEST" \
+            -only-testing:SelfvoyUITests/ScreenTourTests -derivedDataPath build \
+            -resultBundlePath "$GITHUB_WORKSPACE/shots/ios/Tour.xcresult" \
+            CODE_SIGNING_ALLOWED=NO > "$GITHUB_WORKSPACE/shots/ios/xcodebuild.log" 2>&1
+          status=$?
+          grep -E "error:|Test Case|TEST (SUCCEEDED|FAILED)|XCTAssert|failed" "$GITHUB_WORKSPACE/shots/ios/xcodebuild.log" | tail -60
+          exit $status
+      - name: Логи стека
+        if: always()
+        run: |
+          mkdir -p shots/ios
+          cp build/devstack/*.log shots/ios/ 2>/dev/null || true
+          tail -c 200000 shots/ios/xcodebuild.log > shots/ios/xcodebuild-tail.log 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: shots-ios, path: shots/ios }
+
+  # Снимки → ветки builds/shots-*: только main; код из репозитория здесь не
+  # исполняется (только скачанные артефакты).
+  publish:
+    name: Снимки → ветки builds/shots-*
+    needs: [android, windows, ios]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { name: shots-android, path: shots/android }
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { name: shots-windows, path: shots/windows }
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { name: shots-ios, path: shots/ios }
+      - name: Публикация снимков
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          for platform in android windows ios; do
+            dir="shots/$platform"
+            mkdir -p "$dir"
+            (
+              cd "$dir"
+              rm -rf Tour.xcresult xcodebuild.log
+              [ -n "$(ls -A)" ] || echo "снимков нет — см. лог прогона" > README.txt
+              git init -q -b "builds/shots-$platform"
+              git config user.name selfvoy-ci && git config user.email ci@selfvoy.local
+              git add -A && git commit -qm "$platform shots ${{ github.sha }} [skip ci]"
+              git push -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}" "HEAD:refs/heads/builds/shots-$platform"
+            )
+          done

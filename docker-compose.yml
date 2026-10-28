@@ -1,0 +1,156 @@
+# Прод-стек Selfvoy: PostgreSQL + Python AI Service + C++-сервер.
+#
+# Секреты обязательны: compose откажется стартовать, если они не заданы в .env
+# (шаблон — .env.example, генерация — `openssl rand -hex 32`).
+# Наружу опубликован только порт сервера 9000 (за TLS-прокси, wss://);
+# PostgreSQL и AI-сервис доступны лишь внутри сети compose.
+# SELFVOY_DEV_MODE здесь не задаётся и в проде задаваться не должен.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: selfvoy
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required (openssl rand -hex 32)}
+      # Пароли ролей приложения — их создаёт deploy/postgres/20-app-roles.sh
+      SELFVOY_DB_PASSWORD: ${SELFVOY_DB_PASSWORD:?SELFVOY_DB_PASSWORD is required (openssl rand -hex 32)}
+      SELFVOY_AI_DB_PASSWORD: ${SELFVOY_AI_DB_PASSWORD:?SELFVOY_AI_DB_PASSWORD is required (openssl rand -hex 32)}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Только схема и роли. seed.sql (демо-аккаунты) в прод не монтируется.
+      - ./schema/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+      - ./deploy/postgres/20-app-roles.sh:/docker-entrypoint-initdb.d/20-app-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d selfvoy"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    # ports не публикуются: доступ к БД — только из сети compose.
+    # Для обслуживания: docker compose exec postgres psql -U postgres selfvoy
+
+  ai:
+    build:
+      context: ./ai
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SELFVOY_MEMORY_BACKEND: postgres
+      # Отдельная роль selfvoy_ai: только user_memory и users(id, email).
+      SELFVOY_DATABASE_URL: postgresql://selfvoy_ai:${SELFVOY_AI_DB_PASSWORD:?SELFVOY_AI_DB_PASSWORD is required}@postgres/selfvoy
+      SELFVOY_AI_TOKEN: ${SELFVOY_AI_TOKEN:?SELFVOY_AI_TOKEN is required (openssl rand -hex 32)}
+      SELFVOY_LLM_PROVIDER: ${SELFVOY_LLM_PROVIDER:-mock}
+      SELFVOY_LLM_MODEL: ${SELFVOY_LLM_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Другой OpenAI-совместимый провайдер (пусто — api.openai.com).
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      SELFVOY_LLM_TIMEOUT: ${SELFVOY_LLM_TIMEOUT:-20}
+      SELFVOY_RAG_MODE: ${SELFVOY_RAG_MODE:-auto}
+      SELFVOY_CORS_ORIGINS: http://server:9000
+    healthcheck:
+      # В python:3.12-slim нет curl — проверяем средствами самого Python.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    # ports не публикуются: AI-сервис — внутренний, к нему ходит только server.
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    depends_on:
+      ai:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      # Роль selfvoy_app: только DML, не суперпользователь.
+      SELFVOY_DATABASE_URL: postgresql://selfvoy_app:${SELFVOY_DB_PASSWORD:?SELFVOY_DB_PASSWORD is required}@postgres/selfvoy
+      SELFVOY_DB_POOL_SIZE: ${SELFVOY_DB_POOL_SIZE:-8}
+      SELFVOY_AI_URL: http://ai:8000
+      SELFVOY_AI_TOKEN: ${SELFVOY_AI_TOKEN:?SELFVOY_AI_TOKEN is required (openssl rand -hex 32)}
+      SELFVOY_JWT_SECRET: ${SELFVOY_JWT_SECRET:?SELFVOY_JWT_SECRET is required (openssl rand -hex 32)}
+      SELFVOY_2FA_KEY: ${SELFVOY_2FA_KEY:?SELFVOY_2FA_KEY is required (openssl rand -hex 32)}
+      SELFVOY_HOST: 0.0.0.0
+      SELFVOY_PORT: 9000
+      SELFVOY_MAX_CONNECTIONS: ${SELFVOY_MAX_CONNECTIONS:-1024}
+      SELFVOY_MAX_LOGIN_ATTEMPTS: ${SELFVOY_MAX_LOGIN_ATTEMPTS:-}
+      SELFVOY_LOGIN_WINDOW: ${SELFVOY_LOGIN_WINDOW:-}
+      # Почта: smtp — настоящая отправка; log — только запись в лог (без кодов).
+      SELFVOY_MAIL_DRIVER: ${SELFVOY_MAIL_DRIVER:-log}
+      SELFVOY_SMTP_HOST: ${SELFVOY_SMTP_HOST:-}
+      SELFVOY_SMTP_PORT: ${SELFVOY_SMTP_PORT:-}
+      SELFVOY_SMTP_TLS: ${SELFVOY_SMTP_TLS:-}
+      SELFVOY_SMTP_USER: ${SELFVOY_SMTP_USER:-}
+      SELFVOY_SMTP_PASSWORD: ${SELFVOY_SMTP_PASSWORD:-}
+      SELFVOY_SMTP_FROM: ${SELFVOY_SMTP_FROM:-}
+      SELFVOY_PUSH_DRIVER: ${SELFVOY_PUSH_DRIVER:-dev}
+      SELFVOY_PUSH_WEBHOOK_URL: ${SELFVOY_PUSH_WEBHOOK_URL:-http://push-gateway:8080/push}
+      SELFVOY_MAPS_API_URL: ${SELFVOY_MAPS_API_URL:-http://ai:8000/v1/places/search}
+      SELFVOY_GOOGLE_CLIENT_ID: ${SELFVOY_GOOGLE_CLIENT_ID:-}
+      SELFVOY_GOOGLE_CLIENT_SECRET: ${SELFVOY_GOOGLE_CLIENT_SECRET:-}
+      SELFVOY_OAUTH_GOOGLE_CLIENT_ID: ${SELFVOY_OAUTH_GOOGLE_CLIENT_ID:-}
+      SELFVOY_OAUTH_GOOGLE_CLIENT_SECRET: ${SELFVOY_OAUTH_GOOGLE_CLIENT_SECRET:-}
+      SELFVOY_GITHUB_CLIENT_ID: ${SELFVOY_GITHUB_CLIENT_ID:-}
+      SELFVOY_GITHUB_CLIENT_SECRET: ${SELFVOY_GITHUB_CLIENT_SECRET:-}
+      SELFVOY_YANDEX_CLIENT_ID: ${SELFVOY_YANDEX_CLIENT_ID:-}
+      SELFVOY_YANDEX_CLIENT_SECRET: ${SELFVOY_YANDEX_CLIENT_SECRET:-}
+      SELFVOY_VK_CLIENT_ID: ${SELFVOY_VK_CLIENT_ID:-}
+      SELFVOY_VK_CLIENT_SECRET: ${SELFVOY_VK_CLIENT_SECRET:-}
+      SELFVOY_DISCORD_CLIENT_ID: ${SELFVOY_DISCORD_CLIENT_ID:-}
+      SELFVOY_DISCORD_CLIENT_SECRET: ${SELFVOY_DISCORD_CLIENT_SECRET:-}
+      SELFVOY_LOG_LEVEL: ${SELFVOY_LOG_LEVEL:-info}
+      # Админ-панель: email первых администраторов (только подтверждённые адреса).
+      SELFVOY_ADMIN_EMAILS: ${SELFVOY_ADMIN_EMAILS:-}
+      SELFVOY_TRUSTED_PROXIES: ${SELFVOY_TRUSTED_PROXIES:-}
+      SELFVOY_PUBLIC_URL: ${SELFVOY_PUBLIC_URL:-}
+      # Тариф Pro (0 — бета, всё открыто) и Telegram-бот (пусто — выключен).
+      SELFVOY_PLANS_ENFORCED: ${SELFVOY_PLANS_ENFORCED:-}
+      SELFVOY_TELEGRAM_BOT_TOKEN: ${SELFVOY_TELEGRAM_BOT_TOKEN:-}
+      SELFVOY_TELEGRAM_BOT_USERNAME: ${SELFVOY_TELEGRAM_BOT_USERNAME:-}
+      SELFVOY_TELEGRAM_API_URL: ${SELFVOY_TELEGRAM_API_URL:-}
+      SELFVOY_TELEGRAM_POLL: ${SELFVOY_TELEGRAM_POLL:-}
+      # Оплата записи (F4): адрес API ЮKassa (пусто — https://api.yookassa.ru/v3).
+      SELFVOY_YOOKASSA_API_URL: ${SELFVOY_YOOKASSA_API_URL:-}
+      SELFVOY_CA_FILE: ${SELFVOY_CA_FILE:-}
+      SELFVOY_SERVER_PUBLIC_URL: ${SELFVOY_SERVER_PUBLIC_URL:-}
+    healthcheck:
+      # Порт 9000 принимает соединения (в образе есть bash, curl — нет).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    ports:
+      # Публичная точка входа: ставьте TLS-прокси (wss://) перед ней.
+      # Только локально за прокси на этой же машине: SELFVOY_BIND=127.0.0.1
+      - "${SELFVOY_BIND:-0.0.0.0}:9000:9000"
+
+  push-gateway:
+    build:
+      context: ./deploy/push_gateway
+      dockerfile: Dockerfile
+    environment:
+      PUSH_GATEWAY_DEV_MODE: ${PUSH_GATEWAY_DEV_MODE:-1}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_KEY_PATH: ${APNS_KEY_PATH:-}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID:-}
+      FCM_ACCESS_TOKEN: ${FCM_ACCESS_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  pgdata:

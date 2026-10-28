@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Базовая тема окна; палитра full_mix живёт в ui/theme/Theme.kt. -->
+    <style name="Theme.Selfvoy" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/selfvoy_bg_deep</item>
+        <item name="android:statusBarColor">@color/selfvoy_bg_deep</item>
+        <item name="android:navigationBarColor">@color/selfvoy_bg_deep</item>
+    </style>
+</resources>

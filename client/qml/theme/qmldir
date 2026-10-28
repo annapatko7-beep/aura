@@ -1,0 +1,2 @@
+module Selfvoy.Theme
+singleton SelfvoyTheme 1.0 SelfvoyTheme.qml

@@ -1,0 +1,242 @@
+# Сборка desktop-клиента Selfvoy под Windows (.exe) — артефакт Actions.
+#
+# Результат: вкладка Actions → «Build Windows client» → Artifacts →
+# selfvoy-desktop-windows.zip (selfvoy-client.exe + Qt-рантайм + libpq).
+# Подпись кода и установщик (NSIS/MSI) — отдельно, нужны ваши сертификаты.
+#
+# Безопасность: сборка (исполняет код из репозитория) идёт с токеном только
+# на чтение; публикация — отдельными job'ами с правом записи, которые лишь
+# скачивают артефакты. Ветка builds/windows и релиз «builds» обновляются
+# только push'ем в main; лог — в arena/build-logs на любом push.
+name: Build Windows client
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Qt 6 / MSVC — selfvoy-client.exe
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Qt ставим напрямую aqt: перебираем связки версия/компилятор, пока
+      # одна не встанет (зеркала и состав архивов со временем меняются).
+      - name: Qt 6 (aqt, MSVC x64)
+        shell: pwsh
+        run: |
+          pip install aqtinstall 2>&1 | Tee-Object -FilePath qt-install.log
+          python -m aqt version 2>&1 | Tee-Object -Append qt-install.log
+          $ok = $false
+          foreach ($combo in @(
+            @("6.7.3", "win64_msvc2019_64", "C:\Qt\6.7.3\msvc2019_64"),
+            @("6.8.3", "win64_msvc2022_64", "C:\Qt\6.8.3\msvc2022_64"),
+            @("6.6.3", "win64_msvc2019_64", "C:\Qt\6.6.3\msvc2019_64")
+          )) {
+            # Как называется модуль TTS в этой версии — покажет список (пишем в лог).
+            python -m aqt list-qt windows desktop --modules $combo[0] $combo[1] 2>&1 |
+              Tee-Object -Append qt-install.log
+            foreach ($modules in @(
+              ,@("qtwebsockets", "qtmultimedia", "qttexttospeech")
+              ,@("qtwebsockets", "qtmultimedia", "qtspeech")
+            )) {
+              python -m aqt install-qt windows desktop $combo[0] $combo[1] `
+                -m @modules -O C:\Qt 2>&1 | Tee-Object -Append qt-install.log
+              if ($LASTEXITCODE -eq 0 -and (Test-Path "$($combo[2])\bin\qmake.exe")) {
+                echo "CMAKE_PREFIX_PATH=$($combo[2])" >> $env:GITHUB_ENV
+                echo "$($combo[2])\bin" >> $env:GITHUB_PATH
+                $ok = $true
+                break
+              }
+            }
+            if ($ok) { break }
+          }
+          if (-not $ok) { exit 1 }
+
+      - name: Конфигурация и сборка
+        shell: pwsh
+        run: |
+          # Собираем только клиент: сервер — POSIX-код (сокеты/poll), на
+          # Windows он не нужен и не собирается (SELFVOY_WITH_SERVER=OFF).
+          # Клиент libpq не использует — сервер у пользователя живёт в Docker.
+          # Только MSVC (cl.exe): mingw64 на раннере конфликтует с MSVC-сборкой Qt.
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DSELFVOY_WITH_CLIENT=ON -DSELFVOY_WITH_SERVER=OFF 2>&1 | Tee-Object -FilePath build.log
+          cmake --build build --config Release 2>&1 | Tee-Object -Append build.log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Упаковка (windeployqt)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build\client\Release\selfvoy-client.exe dist\
+          # --qmldir: без него windeployqt не кладёт QML-модули (QtQuick.Controls,
+          # Layouts, Effects), и программа падает при запуске.
+          windeployqt --release --no-translations --qmldir client\qml dist\selfvoy-client.exe 2>&1 | Tee-Object -Append build.log
+          # Рантайм MSVC рядом с программой: на чистой Windows его может не быть.
+          foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "concrt140.dll")) {
+            if (Test-Path "C:\Windows\System32\$dll") { Copy-Item "C:\Windows\System32\$dll" dist\ -Force }
+          }
+
+      - name: Установщик (NSIS) и портативный архив
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            $nsis = "${env:ProgramFiles(x86)}\NSIS"
+            if (-not (Test-Path "$nsis\makensis.exe")) { choco install nsis -y --no-progress | Out-Null }
+            echo "$nsis" >> $env:GITHUB_PATH
+            $env:PATH = "$nsis;$env:PATH"
+          }
+          makensis client\packaging\windows\selfvoy.nsi
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Compress-Archive -Path dist\* -DestinationPath Selfvoy-portable-windows.zip -Force
+
+      - name: Артефакт — установщик
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfvoy-setup-windows
+          path: |
+            Selfvoy-Setup.exe
+            Selfvoy-portable-windows.zip
+
+      - name: Артефакт — exe
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfvoy-desktop-windows
+          path: dist/
+
+      - name: Артефакт — лог сборки (для отладки)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-windows
+          path: |
+            qt-install.log
+            build.log
+
+      # Ошибки компиляции — в аннотации прогона (читаются через API).
+      - name: Диагностика (аннотации)
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          if (Test-Path build.log) {
+            $lines = Select-String -Path build.log -Pattern "error|FAILED" | Select-Object -Last 20
+            foreach ($l in $lines) {
+              $m = ($l.Line -replace "[\r\n]", " ")
+              if ($m.Length -gt 400) { $m = $m.Substring(0, 400) }
+              Write-Output "::error title=windows-build::$m"
+            }
+          }
+          exit 0
+
+  # Песочница разработки не видит blob-хосты артефактов: готовые файлы
+  # кладём в ветку builds/windows и в релиз «builds». Только push в main.
+  publish:
+    name: Публикация установщика (main)
+    needs: windows
+    if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: selfvoy-setup-windows
+          path: setup
+
+      - name: Публикация в ветку builds/windows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir pub && cp setup/Selfvoy-Setup.exe setup/Selfvoy-portable-windows.zip pub/
+          cd pub
+          for f in *; do
+            if [ "$(wc -c < "$f")" -gt 94000000 ]; then split -b 90m -d "$f" "$f.part"; rm "$f"; fi
+          done
+          git init -q -b builds/windows
+          git config user.name selfvoy-ci && git config user.email ci@selfvoy.local
+          git add -A && git commit -qm "windows ${{ github.sha }} [skip ci]"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}" HEAD:refs/heads/builds/windows
+
+      # Страница Releases → «Сборки Selfvoy»: файлы можно скачать прямо оттуда.
+      - name: Публикация в релиз «builds» (Windows)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          R="$GITHUB_REPOSITORY"
+          gh release view builds -R "$R" >/dev/null 2>&1 || gh release create builds -R "$R" \
+            --prerelease --target "$GITHUB_SHA" --title "Сборки Selfvoy (последние)" \
+            --notes "Автоматические сборки из main. Selfvoy-debug.apk и Selfvoy-Setup.exe — нативные клиенты (Compose, Qt). Selfvoy-web.apk и Selfvoy-web-Setup.exe — веб-клиент (Capacitor, Electron). Всем нужен сервер Selfvoy." || true
+          gh release upload builds setup/Selfvoy-Setup.exe setup/Selfvoy-portable-windows.zip -R "$R" --clobber
+          # Файлы со старыми именами (до переименования продукта в Selfvoy).
+          for old in Aura-Setup.exe Aura-portable-windows.zip; do gh release delete-asset builds "$old" -R "$R" -y || true; done
+
+  # Логи — в ветку arena/build-logs (песочница читает её обычным git).
+  log:
+    name: Лог сборки → arena/build-logs
+    needs: windows
+    if: always() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: build-log-windows
+
+      - name: Публикация лога
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Шаг вспомогательный: git-ошибки не должны ронять job.
+          set +e
+          rm -f push-diag.log
+          echo "run ${{ github.run_id }} job windows" > push-diag.log
+          for i in 1 2 3; do
+            rm -rf logpub
+            {
+              git -c http.extraHeader="Authorization: token $GH_TOKEN" \
+                clone --depth 1 --branch arena/build-logs \
+                "https://github.com/${{ github.repository }}" logpub 2>&1
+              echo "clone exit=$?"
+            } >> push-diag.log
+            if [ ! -d logpub/.git ]; then
+              # клон не удался — создаём репозиторий локально
+              mkdir -p logpub
+              (
+                cd logpub
+                git init -q
+                git remote add origin "https://github.com/${{ github.repository }}"
+                git -c http.extraHeader="Authorization: token $GH_TOKEN" fetch --depth 1 origin arena/build-logs
+                git checkout -q -B arena/build-logs FETCH_HEAD
+              ) >> push-diag.log 2>&1
+            fi
+            [ -f qt-install.log ] && cp qt-install.log logpub/windows-qt-install.log
+            [ -f build.log ] && cp build.log logpub/windows-build.log
+            (
+              cd logpub
+              git config user.name "selfvoy-ci"
+              git config user.email "ci@selfvoy.local"
+              git add -A 2>&1
+              git commit -m "windows log ${{ github.sha }} [skip ci]" 2>&1
+              git -c http.extraHeader="Authorization: token $GH_TOKEN" push origin HEAD:arena/build-logs 2>&1
+            ) >> push-diag.log 2>&1 && echo "push ok" >> push-diag.log && break
+            sleep 10
+          done
+          printf '::error title=windows-publish::%s\n' "$(tail -14 push-diag.log | tr '\r' ' ' | tr '\n' '~' | cut -c1-1500)"
+          exit 0

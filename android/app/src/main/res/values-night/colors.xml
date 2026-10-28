@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Тёмная тема окна: фон #000000, акцент #7D93FF (как в ui/theme/Theme.kt). -->
+    <color name="selfvoy_bg_deep">#000000</color>
+    <color name="selfvoy_accent">#7D93FF</color>
+</resources>
