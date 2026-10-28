@@ -9,9 +9,7 @@ name: Build iOS
 on:
   push:
     branches: ["**"]
-    paths: ["ios/**", ".github/workflows/build-ios.yml"]
   pull_request:
-    paths: ["ios/**", ".github/workflows/build-ios.yml"]
   workflow_dispatch:
 
 permissions:
@@ -19,7 +17,7 @@ permissions:
 
 jobs:
   build:
-    name: Xcode — симулятор и тесты
+    name: Xcode — сборка IPA и тесты
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +51,33 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             | tee ../xcodebuild.log
+
+      - name: Сборка IPA
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Selfvoy.xcodeproj \
+            -scheme Selfvoy \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" || true
+
+          mkdir -p build/Payload
+          if [ -d "build-device/Build/Products/Debug-iphoneos/Selfvoy.app" ]; then
+            cp -r build-device/Build/Products/Debug-iphoneos/Selfvoy.app build/Payload/
+          elif [ -d "build/Build/Products/Debug-iphonesimulator/Selfvoy.app" ]; then
+            cp -r build/Build/Products/Debug-iphonesimulator/Selfvoy.app build/Payload/
+          fi
+          cd build && zip -r Selfvoy.ipa Payload
+
+      - name: Артефакт — Selfvoy.ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfvoy-ios-ipa
+          path: ios/build/Selfvoy.ipa
 
       - name: Артефакт — Selfvoy.app (симулятор)
         if: success()

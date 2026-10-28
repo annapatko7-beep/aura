@@ -6067,8 +6067,11 @@ TEST(calendar_feed_ics_over_http) {
     CHECK_EQ(feed_test::httpGet(fixture, newPath, http), std::string());
     CHECK_EQ(http.status, 200);
     CHECK_EQ(feed_test::httpGet(fixture, "/healthz", http), std::string());
-    CHECK_EQ(http.status, 200);
-    CHECK_EQ(http.body, std::string("{\"status\":\"ok\"}"));
+    // Проверяем, что health-check возвращает агрегированный статус (в тесте AI не отвечает, поэтому degraded)
+    CHECK_EQ(http.status, 503);
+    CHECK(http.body.find("\"status\":\"degraded\"") != std::string::npos);
+    CHECK(http.body.find("\"db\":true") != std::string::npos);
+    CHECK(http.body.find("\"ai\":false") != std::string::npos);
     feed_test::httpGet(fixture, "/other", http);
     CHECK_EQ(http.status, 400);  // прочие HTTP-запросы — как раньше
 
